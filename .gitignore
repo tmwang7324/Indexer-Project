@@ -1,0 +1,9 @@
+# Local database credentials (copy info.json.template to info.json)
+info.json
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Run logs written by load_transactions.sh
+log/

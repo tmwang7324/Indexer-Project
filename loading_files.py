@@ -24,6 +24,7 @@ New package: psycopg2 now applies on this script                                
 
 #    Scripts start below
 import os
+import sys
 import json
 from functions import check_file
 from functions import create_connection

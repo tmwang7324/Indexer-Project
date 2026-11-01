@@ -75,12 +75,13 @@ try:
     decoded_response = decode_tx(transaction_string)
     if(decoded_response == None):
         print(f"failed to decode transaction in block {file_name}", file=sys.stderr)
-        exit()
+        sys.exit(1)
     tx_hash = hash_to_hex(transaction_string)
     chain_id = content['block']['header']['chain_id']
     height = content['block']['header']['height']
-    search_query = f"SELECT block_id FROM blocks WHERE height = '{height}'" # Search the block hash from the block
-    cursor.execute(search_query)
+    # Heights repeat across chains, so the block is identified by (chain_id, height)
+    search_query = "SELECT block_id FROM blocks WHERE chain_id = %s AND height = %s"
+    cursor.execute(search_query, (chain_id, height))
     result = cursor.fetchall()
     block_id = result[0][0]
     memo = decoded_response['tx']['body']['memo']
@@ -114,8 +115,11 @@ try:
     tx_id = cursor.fetchone()[0]
 except errors.UniqueViolation as e:
     connection.rollback()
-    search_query = f"SELECT tx_id FROM transactions WHERE block_id = '{block_id}'"
-    cursor.execute(search_query)
+    # Look the transaction up by its own unique key. Searching by block_id
+    # returned an arbitrary transaction of the block (usually the first), so a
+    # re-run attached this transaction's messages to a different transaction.
+    search_query = "SELECT tx_id FROM transactions WHERE tx_hash = %s AND chain_id = %s AND height = %s"
+    cursor.execute(search_query, (tx_hash, chain_id, height))
     tx_id = cursor.fetchone()[0]
 connection.commit()
 
@@ -128,9 +132,10 @@ with open('type.json', 'r') as f:
     type_json = json.load(f)
 
 
-# Use FOR LOOP to load every message in the transaction
-i = 1
-for message in decoded_response['tx']['body']['messages']:
+# Use FOR LOOP to load every message in the transaction.
+# enumerate keeps i equal to the message's real position even when a message
+# is skipped with 'continue' (unknown type), so message numbers stay stable.
+for i, message in enumerate(decoded_response['tx']['body']['messages'], start=1):
 
     # Define the type of message to find the corresponding python script
     
@@ -183,7 +188,6 @@ for message in decoded_response['tx']['body']['messages']:
         print(f'Script {table_type} does not have a main function, error caused in block {file_name}', file=sys.stderr)
     except ImportError:
         print(f'Script {table_type} could not be found, error caused in block {file_name}', file=sys.stderr)
-    i += 1
 
 cursor.close()
 connection.close()

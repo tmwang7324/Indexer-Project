@@ -49,24 +49,27 @@ def main(address):
     created_time = datetime.now()
     updated_time = created_time
 
-    # Find the index of number 1 in the string
-    index_of_1 = address.find('1')
+    # Find the bech32 separator: the last '1' in the string. The data part
+    # after it can never contain '1', but the prefix in front of it can.
+    index_of_1 = address.rfind('1')
     # Count the length after 1
     substring_after_1 = address[index_of_1 + 1:]
     length_after_1 = len(substring_after_1)
     #print(length_after_1, file=sys.stderr)
     # If the string contains 'valoper' string, this is a validator address
     validator = 'valoper'
-    if validator in address:
+    if len(address) == 0:
+        address_type = 'blank'
+    elif validator in address:
         address_type = 'validator'
-    # If the length larger than 38, this is a contract address
-    elif length_after_1 >= 38:
-        address_type = 'contract'
-    # If the length after 1 equals 38, this is a user address
+    # If the length after 1 equals 38, this is a user address.
+    # (Checked before the contract case: '>= 38' used to come first, so this
+    # branch was unreachable and every user address was labelled 'contract'.)
     elif length_after_1 == 38:
         address_type = 'user'
-    elif len(address) == 0:
-        address_type = 'blank'
+    # If the length after 1 is larger than 38, this is a contract address
+    elif length_after_1 > 38:
+        address_type = 'contract'
     # If the address does not belong to three types above, it will be an unknown type
     else:
         address_type = 'Unknown'
@@ -87,8 +90,8 @@ def main(address):
 
     except errors.UniqueViolation as e:
         connection.rollback()
-        search_query = f"SELECT address_id FROM address WHERE addresses = '{address}'"
-        cursor.execute(search_query)
+        search_query = "SELECT address_id FROM address WHERE addresses = %s"
+        cursor.execute(search_query, (address,))
         address_id = cursor.fetchone()[0]
 
     connection.commit()

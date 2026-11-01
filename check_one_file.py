@@ -50,25 +50,9 @@ if Validate_json(result, file_name) == 1:
     else:
         sys.exit(0)
 else:
-    foundError = checkLine(file_name, 1)
-    if(foundError >= 0):
-       try:
-            with open(file_name, 'r') as fr:
-                # reading line by line
-                lines = fr.readlines()
-                
-                # pointer for position
-                ptr = 1
-            
-                # opening in writing mode
-                with open(file_name, 'w') as fw:
-                    for line in lines:
-                    
-                        # we want to remove 5th line
-                        if ptr != foundError:
-                            fw.write(line)
-                        ptr += 1
-            print("Deleted", file=sys.stderr)
-       except:
-            print("Oops! something error")
+    # The file is valid JSON but does not match the block schema. Report it and
+    # leave the file untouched: an indexer should never rewrite its input. (The
+    # previous code called checkLine with the wrong number of arguments, so it
+    # crashed with a TypeError before it could exit with code 8.)
+    print(f"{file_name} does not match the block schema; see the validation error above.", file=sys.stderr)
     sys.exit(8)

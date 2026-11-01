@@ -60,17 +60,19 @@ tx_hash = hash_to_hex(transaction_string)
 order = int(num) + 1
 loadedCorrectly = True
 cursor = connection.cursor()
-search_query = f"SELECT block_id FROM blocks WHERE height = '{height}'" # Search the block hash from the block
-cursor.execute(search_query)
+search_query = "SELECT block_id FROM blocks WHERE chain_id = %s AND height = %s"
+cursor.execute(search_query, (chain_id, height))
 result = cursor.fetchall()
 ##########block_id =
 
+# Must match the defaults loading_tx.py stores for a transaction with no fee
+# (it stores fee_denom "" and fee_amount 0, which the VARCHAR column reads back as "0").
 if(len(decoded_response['tx']['auth_info']['fee']['amount']) != 0):
         fee_denom = decoded_response['tx']['auth_info']['fee']['amount'][0]['denom']
         fee_amount = decoded_response['tx']['auth_info']['fee']['amount'][0]['amount']
 else:
-        fee_denom = "0"
-        fee_amount = "0"  
+        fee_denom = ""
+        fee_amount = "0"
         
 
 trans_values = {
@@ -88,12 +90,13 @@ trans_values = {
 }
 print(decoded_response)
 try:
-    query = f"SELECT block_id, tx_hash, chain_id, height, memo, fee_denom, fee_amount, gas_limit, created_at, tx_info, comment FROM transactions WHERE height = %s AND tx_hash = %s"
-    cursor.execute(query, (height, tx_hash))
+    query = "SELECT block_id, tx_hash, chain_id, height, memo, fee_denom, fee_amount, gas_limit, created_at, tx_info, comment FROM transactions WHERE chain_id = %s AND height = %s AND tx_hash = %s"
+    cursor.execute(query, (chain_id, height, tx_hash))
     row = cursor.fetchall()
-    
-    if row is None:
 
+    # fetchall() returns an empty list (never None) when nothing matches
+    if len(row) != 1:
+        loadedCorrectly = False
         print(row, file=sys.stderr)
         print("There should be only one row in block " + file_name + " at transaction " + num + ", found", len(row), "rows", file=sys.stderr)
         cursor.close()
@@ -130,6 +133,7 @@ try:
 
 
             if block_info != db_info:
+               loadedCorrectly = False
                print(
                     f"Error in block " + file_name + " at transaction " + num + " in column " + col + " found\n",
                     "Expected: " + str(block_info) + "\n",
@@ -139,3 +143,8 @@ try:
 
 except errors.UniqueViolation as e:
     pass
+
+# Exit non-zero on any mismatch so load_transactions.sh can report it
+# (previously this script exited 0 even when verification failed).
+if not loadedCorrectly:
+    sys.exit(1)
