@@ -179,6 +179,10 @@ export LOG=$txt/output.log
 export OUT=$txt/output2.log
 export TEST=$txt/test.log
 export ERR=$txt/error.log
+# loading_tx.py reads the log folder from $txt to write new_type.txt. It was
+# never exported, so an unknown message type crashed loading_tx.py with
+# FileNotFoundError: 'None/new_type.txt'.
+export txt
 
 # Set the values of psql login info
 DBNAME=$(jq -r '.psql.db_name' $info_path)

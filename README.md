@@ -56,6 +56,18 @@ or
 ```
 bash load_transactions.sh -b <block folder location> -t
 ```
+## Running the tests
+From the root directory of the repository:
+```
+python3 -m unittest discover -s tests
+```
+The tests that need PostgreSQL are skipped unless `INDEXER_TEST_DB_NAME` is set. **They drop and recreate the `public` schema of that database, so use a throwaway database.** Connection settings come from `INDEXER_TEST_DB_NAME`, `INDEXER_TEST_DB_USER`, `INDEXER_TEST_DB_PASSWORD`, `INDEXER_TEST_DB_HOST` and `INDEXER_TEST_DB_PORT`:
+```
+createdb indexer_test
+INDEXER_TEST_DB_NAME=indexer_test INDEXER_TEST_DB_USER=<user> INDEXER_TEST_DB_PASSWORD=<password> python3 -m unittest discover -s tests
+```
+Transactions are decoded from saved fixtures in `tests/fixtures/decoded`, so the tests need no network access.
+
 # ERD
 [ERD for indexer](ERD.pdf)
 
