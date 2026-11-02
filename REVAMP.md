@@ -236,12 +236,15 @@ Decisions agreed while reviewing this plan, newest last. Where a decision change
 | D20 | How are database tests isolated from each other? | **By layer.** Component tests run inside a transaction that is rolled back after each test. Integration and end-to-end tests, which commit from several connections and threads, truncate the indexer's tables after each test. Migrations run once per session. | Shapes the code: each insert function takes a cursor and **never commits**; only the block-level writer controls `BEGIN`/`COMMIT`/`ROLLBACK`. That is what lets a component test wrap an insert in a transaction it rolls back, and it matches D14 (one transaction per block). The truncate covers every table in the indexer's schema except `alembic_version`, with `CASCADE`. Integration tests therefore can't run in parallel against the same database. |
 | D21 | What happens when a worker thread hits an error? | **Classify; bugs stop everything.** Transient errors (timeouts, 429/5xx, a dropped database connection) retry the block with backoff, then record it in `failed_blocks`. Bad data (a D14 count mismatch, a malformed response) goes straight to `failed_blocks`. An unexpected exception stops the run: no new heights are handed out, in-flight blocks finish or roll back, all threads are joined, and the process exits non-zero. | Exceptions in threads don't propagate on their own: the coordinator must watch each worker's future, and on an unexpected error set a shared stop event that workers check between blocks. Python threads can't be killed, so every HTTP request and database statement needs a timeout, or shutdown could hang. A broken connection is discarded (`putconn(conn, close=True)`) rather than returned to the pool. A failed height blocks the contiguous checkpoint until it succeeds, so a restart retries it automatically. The test cases are listed in 8.2. |
 | D22 | How are threaded tests made deterministic? | **Scripted orderings plus one stress test.** The fake block source has a gate per height (`threading.Event`) so a test forces an exact order, e.g. hold 103, let 105 commit, then inject the crash. One stress test runs the threaded indexer many times with random delays and failures and checks the invariants after each run. | Fetch gates alone can't order *commits*, so the writer takes optional hook callbacks (e.g. `before_commit(height)`) that tests use to pause a block just before it commits; production passes none. Every threaded test has a hard timeout (the `pytest-timeout` plugin), so a deadlock fails instead of hanging the suite. The stress test uses a seeded random generator and prints the seed, so any failure can be replayed exactly; it is marked `slow` and checks: every height stored exactly once or in `failed_blocks`, a correct contiguous checkpoint, all connections back in the pool, and all threads joined. |
+| D23 | What coverage target? | **Tiered and enforced:** 90% branch coverage for the correctness-critical modules (writer, verifier, checkpoint, error handling, handlers) and 80% overall, measured with pytest-cov over the unit, component and integration layers. Every one of the 35 handlers has at least one test. | Below either floor, the test run fails. `--cov-fail-under` only checks the overall total, so the 90% tier is a second `coverage report --include=<critical modules> --fail-under=90` step. End-to-end tests run the indexer as a separate process and don't count towards coverage. Coverage is a floor that catches untested code, not proof of good tests. |
+| D24 | What test data is committed? | **A curated sample of ~50 Terra blocks** (~1 MB gzipped, in replay-cache format), hand-picked so most handler types and the edge cases appear: empty blocks, multi-message transactions, a failed transaction, a multi-coin fee. Plus expected-JSON files for the end-to-end GraphQL queries, and the existing Migaloo blocks and fixture. | The 25,000-block replay cache stays local and git-ignored. Blocks are picked by scanning the local cache; recent Terra blocks may not contain every one of the 35 types (e.g. `MsgStoreCode` or IBC connection handshakes are rare), so a type missing from the sample gets a hand-written message fixture for its unit test. Expected-JSON files are regenerated deliberately (a flag on the test run) and reviewed in the diff, never updated automatically. |
+| D25 | Where and when does each layer run? | **GitHub Actions, every layer on every push and pull request**: unit, component, integration, end-to-end, the seeded stress test and legacy, with the coverage floors (D23). Locally, one command per layer (`pytest -m unit`, ...). | CI runs PostgreSQL 16 as a service container, the counterpart of the Compose `postgres-test` service (D19). Because everything runs on every push, the whole suite must stay fast (target: under 5 minutes) and **hermetic**: no test may call a public node, so the stress test runs a fixed number of seeded rounds and the old-vs-new speed benchmark (D10), which needs the network, is a separate manual command, not a test. The legacy shell tests need `psql` and `jq` on the runner. |
 
 ---
 
 ## 8. Testing strategy
 
-*Draft under review. Items marked **(open)** are settled one at a time and recorded in the decisions log (section 7).*
+*Agreed in review; the decisions are D18 to D25 in section 7.*
 
 ### 8.1 Layers
 
@@ -250,49 +253,63 @@ Decisions agreed while reviewing this plan, newest last. Where a decision change
 | **Unit** | Pure functions, no I/O | none | everything outside the function | every change; whole layer in seconds |
 | **Component** | One component with its own real dependency: **verification of blocks and transactions**, and **each individual insert into PostgreSQL** | PostgreSQL (migrated with Alembic, D17) | block source, other components | every change |
 | **Integration** | **Verification and inserts together**, block by block, **synchronously and with the thread pool**, including **error handling in worker threads** | PostgreSQL, connection pool, worker threads | block source (a controllable fake over the replay cache) | every change |
-| **End-to-end** | The whole system: replay cache → indexer → PostgreSQL → GraphQL over HTTP | everything except the network (the replay cache stands in for nodes) | public nodes | before merging; nightly |
+| **End-to-end** | The whole system: replay cache → indexer → PostgreSQL → GraphQL over HTTP | everything except the network (the replay cache stands in for nodes) | public nodes | every change (D25) |
 
 The existing 27 tests (`tests/`) cover the old pipeline and stay as a fifth group, **legacy**, because the old pipeline is kept (D8).
 
-### 8.2 What each layer covers
+### 8.2 Test cases
 
-**Unit**
-- Parsing a block response once into block, transaction and message objects (5.1), for both the Terra and the Migaloo shapes (D12).
-- Transaction hash: SHA-256 of the raw bytes in `block.data.txs`.
-- Matching each decoded transaction to its outcome in `/block_results` by position (D4), including a response whose counts disagree.
-- Address classification for Terra and Migaloo prefixes (the existing `classify_address` tests carry over).
-- Each handler's mapping from message JSON to its typed row (D2), one test per handler, with fixture messages.
-- The contiguous checkpoint: given the set of finished heights, the highest height below which all are done (5.2, D7).
-- Token-bucket rate limiter (with a fake clock), retry and backoff policy, and endpoint rotation (with a fake HTTP layer).
-- The count-check rules of the verifier (D14), as a pure function from "what the source says" and "what was written" to a list of mismatches.
-- Replay cache format: write then read gives back the same bytes (D5).
+24 test functions, about 100 cases once parametrized (see 8.6 for how the list was slimmed). Every database-backed test in the integration layer ends by calling one shared **invariant checker**:
 
-**Component**
-- **Verifier, blocks and transactions:** inside an open database transaction, the in-transaction count checks (D14) catch a missing transaction, a duplicated one, an extra one, a missing outcome, and a message count that doesn't match. The sampled `verify` command's field-by-field comparison catches a wrong value in one field of a block, transaction or message.
-- **Each insert on its own:** block, transaction, `messages` row, each typed table row, address (de-duplicated), transaction outcome and events, fee coins, checkpoint. For each one:
-  - it writes exactly the expected row;
-  - inserting it a second time changes nothing (`ON CONFLICT DO NOTHING`), and the follow-up lookup still returns the existing id (the `RETURNING` gotcha from question 11 of the bug-fix quiz);
-  - constraints hold: a foreign key to a missing parent fails, and numeric columns accept values above 2^64 (amounts are `NUMERIC`, 5.4);
-  - JSONB round-trips unchanged.
+> every height in the run is stored exactly once or is in `failed_blocks`, never both; no block is partly written; the checkpoint equals the highest contiguous stored height; every pooled connection is back in the pool; every worker thread has exited.
 
-**Integration**
-- **One block, end to end inside the writer:** parse → inserts → count checks → commit, in one database transaction. A count mismatch rolls the whole block back and records it in `failed_blocks`; nothing of it stays in the tables.
-- **Synchronous:** one worker over a fixed set of blocks.
-- **Threaded:** N workers over the same blocks give **exactly the same database contents** as the synchronous run (compared row by row, ignoring generated ids).
-- **Out-of-order completion:** blocks finish out of order, and the contiguous checkpoint is right at every point.
-- **Thread error handling (D21).** In every case: the failing block leaves no rows, the checkpoint does not move past it, and its connection goes back to the pool (or is discarded if broken). Specific cases:
-  - *Transient, recovers:* height H times out twice, then succeeds. H is stored once; other workers are unaffected.
-  - *Transient, gives up:* H keeps failing past the retry limit. H is in `failed_blocks` with its attempt count and last error; later heights are still indexed; the contiguous checkpoint stops at H-1; a restart retries H and, once it succeeds, the checkpoint jumps forward past the heights already done.
-  - *Dropped database connection:* `pg_terminate_backend` kills a worker's connection mid-block. The broken connection is closed rather than returned to the pool, and the block is retried on a fresh one.
-  - *Bad data:* `/block_results` disagrees with the block's transaction count. H goes to `failed_blocks` without retrying, and the run continues.
-  - *Unexpected exception:* a handler raises `KeyError` on H. No new heights are handed out, in-flight blocks finish or roll back, every thread is joined within a timeout, the process exits non-zero, the exception and H are logged, and no block is partly written. After the fix, a restart resumes from the checkpoint.
-  - *Crash during another worker's commit:* that commit either lands completely or not at all.
-  - *Ctrl-C / SIGTERM:* the same orderly shutdown as an unexpected exception, with its own exit code.
-- **Crash and resume:** stop the process partway (including between two out-of-order blocks), restart, and end with every block present once: no gaps, no duplicates.
+**Unit** (no I/O)
 
-**End-to-end**
-- Start from an empty database, run migrations, index a small committed Terra sample from the replay cache plus the Migaloo fixtures, then query GraphQL over HTTP (blocks, a transaction by hash, messages by type, activity for an address, cursor paging) and compare with expected JSON.
-- Old versus new pipeline on the same blocks (D10): both schemas hold the same blocks, transactions and messages.
+| ID | Test | Cases |
+|---|---|---|
+| U1 | `test_parse_block` | Terra block, Migaloo block, empty block, multi-message transaction |
+| U2 | `test_tx_hash` | known Terra transaction → known hash |
+| U3 | `test_match_outcomes` | counts agree; `block_results` has one fewer result (bad data) |
+| U4 | `test_classify_address` | user, contract, validator, blank, unknown, prefix containing `1` |
+| U5 | `test_handler_maps_message` | one case per handler (35), from the curated sample or a hand-written fixture (D24) |
+| U6 | `test_contiguous_checkpoint` | nothing done; in order; a gap; the gap filled |
+| U7 | `test_rate_limiter` | burst up to capacity; refill over time (fake clock) |
+| U8 | `test_error_policy` | transient then success; transient past the limit; bad data, no retry; unexpected exception re-raised (D21) |
+| U9 | `test_endpoint_rotation` | a failing endpoint is skipped, then retried later |
+| U10 | `test_count_rules` | all match; missing tx; extra tx; missing outcome; wrong message count (D14) |
+| U11 | `test_replay_cache_roundtrip` | write then read returns the same bytes (D5) |
+
+**Component** (one component, real PostgreSQL, rolled back after each test, D20)
+
+| ID | Test | Cases |
+|---|---|---|
+| C1 | `test_migrations` | upgrade from empty, downgrade to empty, upgrade again (D17) |
+| C2 | `test_insert_is_idempotent` | block, transaction, `messages` row, typed row, address, outcome and events, fee coins, checkpoint: inserted twice → exactly one row, equal to the expected row, and the same id returned both times |
+| C3 | `test_amount_above_64_bits` | an amount of 2^64 + 1 is stored and read back exactly (`NUMERIC`, 5.4) |
+| C4 | `test_count_check_in_transaction` | the verifier, against rows written in an open transaction: clean block passes; missing tx, duplicate tx, missing outcome and wrong message count are each reported (D14) |
+| C5 | `test_verify_command_finds_field_difference` | one changed field in a block, a transaction, a message (sampled `verify`, D14) |
+
+**Integration** (verification and inserts together, real PostgreSQL, threads; truncated after each test, D20)
+
+| ID | Test | Cases |
+|---|---|---|
+| I1 | `test_block_commits_or_rolls_back` | valid block commits; count mismatch rolls the whole block back into `failed_blocks` |
+| I2 | `test_threaded_matches_sync` | the curated sample indexed by 1 worker and by 8 workers gives identical database contents (ignoring generated ids) |
+| I3 | `test_out_of_order_checkpoint` | gates hold 103, let 105 commit: checkpoint stays at 102, then moves to 105 when 103 lands (D22) |
+| I4 | `test_worker_errors` | transient recovers; transient exhausted; dropped connection (`pg_terminate_backend`); bad data; unexpected exception stops the run with a non-zero exit; SIGTERM stops it in order (D21) |
+| I5 | `test_commit_is_atomic_under_crash` | a crash injected through `before_commit` while another worker commits: that block is all there or not there at all |
+| I6 | `test_resume_after_crash` | crash between out-of-order blocks, restart: every block stored once, no gaps |
+| I7 | `test_stress` *(slow)* | seeded random delays and faults over the curated sample, a fixed number of rounds; seed printed on failure (D22) |
+
+**End-to-end** (separate indexer process, replay cache instead of the network)
+
+| ID | Test | Cases |
+|---|---|---|
+| E1 | `test_graphql` | one indexing run of the curated sample plus the Migaloo fixtures, then each query compared with its expected-JSON file: block range, transaction by hash, messages by type, activity for an address, cursor paging |
+
+**Legacy:** the existing 27 tests, unchanged, marked `legacy` (D8, D18).
+
+**Not tests:** the old-vs-new speed comparison (D10) and throughput benchmarks need the network or long runs, so they are separate commands that write a report, outside the test suite (D25).
 
 ### 8.3 Fault injection
 A fake block source wraps the replay cache and can, on chosen heights: time out, return 429 or 5xx, return malformed JSON, return a `/block_results` with a different transaction count, or respond slowly. On the database side: kill a connection mid-transaction (`pg_terminate_backend`) and force a unique violation.
@@ -308,6 +325,19 @@ Settled one at a time, newest decision in section 7:
 3. ~~Isolation between tests that use the database~~: rollback for component tests, truncate for integration and end-to-end (D20).
 4. ~~Error handling in worker threads~~: classify; bugs stop everything (D21).
 5. ~~Making threaded tests deterministic~~: scripted gates plus one seeded stress test (D22).
-6. Coverage targets.
-7. Committed test data (size of the Terra sample, expected-JSON files).
-8. Where and when each layer runs (locally, in CI).
+6. ~~Coverage targets~~: 90% branch on critical modules, 80% overall, enforced (D23).
+7. ~~Committed test data~~: ~50 curated Terra blocks plus expected-JSON files (D24).
+8. ~~Where and when each layer runs~~: GitHub Actions, every layer on every push (D25).
+
+### 8.6 How the suite was slimmed
+
+A first draft of these layers came to about **130 test functions**; the list in 8.2 has **24** (about 100 cases) and covers the same behaviour. The rules used:
+
+1. **Test each behaviour once, at the lowest layer that can prove it.** Address rules are proved in U4 and never re-asserted in integration tests; integration tests check what only appears when components meet (transactions, threads, crashes).
+2. **Parametrize data instead of copying tests.** 35 handler tests became one test with 35 cases (U5); 8 insert functions × 4 checks (32 tests) became one idempotency test with 8 cases (C2).
+3. **Check invariants once, in one place.** One invariant checker, called at the end of every integration test, replaces each test asserting its own partial list. The stress test (I7) is then just "random scenario + invariant checker".
+4. **Don't test the database or the libraries.** "JSONB comes back unchanged" and "a foreign key to a missing row fails" test PostgreSQL, not this code; they were dropped. The migration test (C1) covers that the schema is defined, and I2 covers that it's used correctly.
+5. **Let one broad test replace many narrow ones when it fails clearly.** I2 (threaded equals synchronous, row by row) covers every insert path in both modes; a failure shows exactly which rows differ.
+6. **One end-to-end run, many assertions on its output.** E1 indexes once (shared fixture) and checks each query against its own expected file, instead of one slow indexing run per query.
+7. **Keep benchmarks and network calls out of the suite.** They make every run slow and flaky; D25 needs the suite hermetic.
+8. **Keep the suite slim:** `pytest --durations=10` shows the slowest tests, the coverage report (`--cov-report=term-missing`) shows untested lines, and a test that has never failed when the code around it was broken is a candidate for removal (mutation testing with `mutmut` finds those).
