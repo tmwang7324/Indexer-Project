@@ -10,6 +10,7 @@ This file records what was found in the 2024 indexer, what has been fixed, what 
 5. [Revamp plan](#5-revamp-plan)
 6. [Open decisions](#6-open-decisions)
 7. [Decisions log](#7-decisions-log)
+8. [Testing strategy](#8-testing-strategy)
 
 ---
 
@@ -86,7 +87,7 @@ These were found but left alone, either because the revamp replaces the code or 
 - **Numbers stored as text:** `height`, `tx_num`, `fee_amount` and `gas_limit` are `VARCHAR`, so `height > 7000000` and `ORDER BY height` compare text (`'9' > '10'`).
 - **Uniqueness depends on English sentences:** message tables are `UNIQUE(tx_id, comment)` (35 tables), and `comment` is text like "This is number 2 message in number 3 transaction".
 - **Redundant indexes:** for example, `UNIQUE (chain_id, height)` already creates an index, and `blocks_chain_id_height` plus `blocks_chain_id_hash_height` duplicate it. `transactions` and `address` have the same problem.
-- **Hard to answer "everything involving address X":** addresses are spread across about 37 message tables, each with its own `*_address_id` columns.
+- **Hard to answer "everything involving address X":** addresses are spread across 35 message tables (plus 2 side tables), each with its own `*_address_id` columns.
 
 ### Housekeeping
 - The README clone URL points to the `Shikhar-G` fork.
@@ -191,10 +192,7 @@ Replace the shell loop and the per-transaction scripts with one Python process:
 - **Read-only**, with its own connection pool and limits on query depth and complexity.
 
 ### 5.6 Testing
-- Keep the current `unittest` suite running against the old scripts until each piece is replaced, then port the tests to the new modules.
-- Fixture-based tests for each handler, using saved decoded transactions with no network.
-- An end-to-end test: a file source with the test blocks → database → GraphQL query → expected JSON.
-- **Benchmarks and failure tests use the replay cache (D5)**, so throughput numbers measure the indexer rather than node latency, runs are reproducible, and a fault-injecting wrapper around the cache can produce timeouts, 429s, malformed responses and crashes on demand.
+The full testing strategy is in [section 8](#8-testing-strategy). In short: unit, component, integration and end-to-end layers for the new indexer; the existing 27 tests stay with the old pipeline, which is kept permanently (D8); benchmarks and failure tests use the replay cache (D5).
 
 ---
 
@@ -233,3 +231,71 @@ Decisions agreed while reviewing this plan, newest last. Where a decision change
 | D15 | Where is the GraphQL API reachable? | **localhost only.** The API binds to 127.0.0.1 (in Compose, its port is published only on the host's loopback interface). | No authentication needed. Query depth and complexity limits are not required at first, since only the machine's own user can reach the API; they become necessary if it is ever exposed. |
 | D16 | Backfill and head-following: which comes first? | **Backfill first, then follow the head.** The indexer starts 25,000 blocks below the head and works upward; once caught up, the same workers poll for new blocks. | One ascending stream, so no gap to stitch together (D3's concern is gone), and the contiguous checkpoint (5.2) covers both phases. Data lags the chain until the catch-up finishes. To ever catch up, the indexer must run faster than the chain, about 0.17 blocks/s (one block per ~5.8 s); the old pipeline's 0.45 blocks/s is only about 2.6 times that. |
 | D17 | How are schema changes for the new indexer managed? | **Alembic**, with each migration written by hand as SQL in `op.execute()` and a matching `downgrade()`. No SQLAlchemy model classes, so autogenerate is not used. | Adds SQLAlchemy and Alembic as dependencies (Alembic connects through SQLAlchemy using the existing psycopg2 driver), plus `alembic.ini` and `env.py`. The indexer and API keep using psycopg2 directly. The `alembic_version` table lives in the new indexer's schema, so the `legacy` schema and `Txs.sql` are untouched (D9). In Compose (D13), a one-off migrate step runs `alembic upgrade head` before the indexer and API start. Tests for the new indexer build their database by running the migrations, which also checks that every migration applies cleanly from empty. |
+
+---
+
+## 8. Testing strategy
+
+*Draft under review. Items marked **(open)** are settled one at a time and recorded in the decisions log (section 7).*
+
+### 8.1 Layers
+
+| Layer | What it tests | Real dependencies | Replaced by fakes | Runs |
+|---|---|---|---|---|
+| **Unit** | Pure functions, no I/O | none | everything outside the function | every change; whole layer in seconds |
+| **Component** | One component with its own real dependency: **verification of blocks and transactions**, and **each individual insert into PostgreSQL** | PostgreSQL (migrated with Alembic, D17) | block source, other components | every change |
+| **Integration** | **Verification and inserts together**, block by block, **synchronously and with the thread pool**, including **error handling in worker threads** | PostgreSQL, connection pool, worker threads | block source (a controllable fake over the replay cache) | every change |
+| **End-to-end** | The whole system: replay cache → indexer → PostgreSQL → GraphQL over HTTP | everything except the network (the replay cache stands in for nodes) | public nodes | before merging; nightly |
+
+The existing 27 tests (`tests/`) cover the old pipeline and stay as a fifth group, **legacy**, because the old pipeline is kept (D8).
+
+### 8.2 What each layer covers
+
+**Unit**
+- Parsing a block response once into block, transaction and message objects (5.1), for both the Terra and the Migaloo shapes (D12).
+- Transaction hash: SHA-256 of the raw bytes in `block.data.txs`.
+- Matching each decoded transaction to its outcome in `/block_results` by position (D4), including a response whose counts disagree.
+- Address classification for Terra and Migaloo prefixes (the existing `classify_address` tests carry over).
+- Each handler's mapping from message JSON to its typed row (D2), one test per handler, with fixture messages.
+- The contiguous checkpoint: given the set of finished heights, the highest height below which all are done (5.2, D7).
+- Token-bucket rate limiter (with a fake clock), retry and backoff policy, and endpoint rotation (with a fake HTTP layer).
+- The count-check rules of the verifier (D14), as a pure function from "what the source says" and "what was written" to a list of mismatches.
+- Replay cache format: write then read gives back the same bytes (D5).
+
+**Component**
+- **Verifier, blocks and transactions:** inside an open database transaction, the in-transaction count checks (D14) catch a missing transaction, a duplicated one, an extra one, a missing outcome, and a message count that doesn't match. The sampled `verify` command's field-by-field comparison catches a wrong value in one field of a block, transaction or message.
+- **Each insert on its own:** block, transaction, `messages` row, each typed table row, address (de-duplicated), transaction outcome and events, fee coins, checkpoint. For each one:
+  - it writes exactly the expected row;
+  - inserting it a second time changes nothing (`ON CONFLICT DO NOTHING`), and the follow-up lookup still returns the existing id (the `RETURNING` gotcha from question 11 of the bug-fix quiz);
+  - constraints hold: a foreign key to a missing parent fails, and numeric columns accept values above 2^64 (amounts are `NUMERIC`, 5.4);
+  - JSONB round-trips unchanged.
+
+**Integration**
+- **One block, end to end inside the writer:** parse → inserts → count checks → commit, in one database transaction. A count mismatch rolls the whole block back and records it in `failed_blocks`; nothing of it stays in the tables.
+- **Synchronous:** one worker over a fixed set of blocks.
+- **Threaded:** N workers over the same blocks give **exactly the same database contents** as the synchronous run (compared row by row, ignoring generated ids).
+- **Out-of-order completion:** blocks finish out of order, and the contiguous checkpoint is right at every point.
+- **Thread error handling:** a worker that raises does not leave a partial block, does not advance the checkpoint past the failed height, and returns its connection to the pool. How errors are classified and what the other workers do is **(open)**.
+- **Crash and resume:** stop the process partway (including between two out-of-order blocks), restart, and end with every block present once: no gaps, no duplicates.
+
+**End-to-end**
+- Start from an empty database, run migrations, index a small committed Terra sample from the replay cache plus the Migaloo fixtures, then query GraphQL over HTTP (blocks, a transaction by hash, messages by type, activity for an address, cursor paging) and compare with expected JSON.
+- Old versus new pipeline on the same blocks (D10): both schemas hold the same blocks, transactions and messages.
+
+### 8.3 Fault injection
+A fake block source wraps the replay cache and can, on chosen heights: time out, return 429 or 5xx, return malformed JSON, return a `/block_results` with a different transaction count, or respond slowly. On the database side: kill a connection mid-transaction (`pg_terminate_backend`) and force a unique violation.
+
+### 8.4 Gaps in the current tests
+- Nothing exists yet for the new indexer; all 27 current tests target the old pipeline.
+- In the old pipeline: the `check_file` repair path (`functions.checkLine`) and `verify_block.py` have no tests; only 4 of the 35 handlers are exercised (`cosmos_exec_msg`, `ibc_updateclient_msg`, `ibc_acknowledgement_msg`, `cosmos_vote_msg`); the multisend and grant side tables have no tests.
+
+### 8.5 Open questions
+Settled one at a time, newest decision in section 7:
+1. Test framework.
+2. Where component and integration tests get PostgreSQL.
+3. Isolation between tests that use the database.
+4. Error handling in worker threads (classification and what the other workers do).
+5. Making threaded tests deterministic.
+6. Coverage targets.
+7. Committed test data (size of the Terra sample, expected-JSON files).
+8. Where and when each layer runs (locally, in CI).
