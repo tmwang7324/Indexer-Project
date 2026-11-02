@@ -1,0 +1,15 @@
+{
+  block(chainId: "migaloo-1", height: 7027410) {
+    chainId
+    height
+    hash
+    time
+    txCount
+    transactions {
+      index
+      hash
+      memo
+      messages { index type }
+    }
+  }
+}

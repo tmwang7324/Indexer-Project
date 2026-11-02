@@ -1,0 +1,15 @@
+{
+  transaction(hash: "E77D14CB104E70372F151F73C5C233A351C6A014B64A67F9BCA9E5EB7B445C20") {
+    hash
+    chainId
+    height
+    memo
+    gasLimit
+    fee { denom amount }
+    messages {
+      index
+      type
+      raw
+    }
+  }
+}

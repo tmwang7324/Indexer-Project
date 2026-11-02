@@ -1,0 +1,8 @@
+# Runtime dependencies of the new indexer service and its GraphQL API.
+psycopg2-binary>=2.9.9
+requests>=2.31
+alembic>=1.13
+SQLAlchemy>=2.0
+fastapi>=0.110
+strawberry-graphql>=0.250
+uvicorn>=0.29

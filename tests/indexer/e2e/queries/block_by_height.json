@@ -1,0 +1,48 @@
+{
+  "block": {
+    "chainId": "migaloo-1",
+    "height": 7027410,
+    "hash": "8C91618FA1CAC47603C51FC49A26F98BE65FE393577216126EC7858ADC382FB7",
+    "time": "2024-05-24T16:22:01.677148Z",
+    "txCount": 3,
+    "transactions": [
+      {
+        "index": 0,
+        "hash": "5A8011C0F349DB4B51C9AB9EBB645D93DFF4F6E5423B8D9937965AF7F6A1A157",
+        "memo": "REStaked by  AutoStake 🛡️ Slash Protected",
+        "messages": [
+          {
+            "index": 0,
+            "type": "/cosmos.authz.v1beta1.MsgExec"
+          }
+        ]
+      },
+      {
+        "index": 1,
+        "hash": "AB116FEECD503A033EF5C70CC92B22E35ED52D82E69B4B10CD9ABB81A5884D19",
+        "memo": "Relayed with 💜 by Lavender.Five Nodes 🐝 | rly(2.5.2)",
+        "messages": [
+          {
+            "index": 0,
+            "type": "/ibc.core.client.v1.MsgUpdateClient"
+          },
+          {
+            "index": 1,
+            "type": "/ibc.core.channel.v1.MsgAcknowledgement"
+          }
+        ]
+      },
+      {
+        "index": 2,
+        "hash": "E77D14CB104E70372F151F73C5C233A351C6A014B64A67F9BCA9E5EB7B445C20",
+        "memo": "LFG! --Voted by Polkachu",
+        "messages": [
+          {
+            "index": 0,
+            "type": "/cosmos.gov.v1.MsgVote"
+          }
+        ]
+      }
+    ]
+  }
+}

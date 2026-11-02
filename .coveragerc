@@ -1,0 +1,9 @@
+[run]
+branch = True
+source = indexer
+# the CLI wiring and generated code are exercised by the end-to-end tests, which run as separate processes
+omit =
+    indexer/__main__.py
+
+[report]
+show_missing = True
