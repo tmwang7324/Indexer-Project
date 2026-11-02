@@ -1,0 +1,188 @@
+# Indexer Revamp
+
+This file records what was found in the 2024 indexer, what has been fixed, what is still open, and the plan for the revamp. The revamp aims at higher throughput, recovery from failures, and GraphQL retrieval.
+
+## Contents
+1. [Where things stand](#1-where-things-stand)
+2. [Issues fixed](#2-issues-fixed)
+3. [Issues still open](#3-issues-still-open)
+4. [Where blocks come from now](#4-where-blocks-come-from-now)
+5. [Revamp plan](#5-revamp-plan)
+6. [Open decisions](#6-open-decisions)
+
+---
+
+## 1. Where things stand
+
+`load_transactions.sh` loops over a folder of block JSON files. For each block it runs `check_one_file.py` (schema validation), `loading_files.py` (`blocks` row) and `verify_block.py`. For each transaction in the block it then runs `loading_tx.py` and `verify_tx.py`. Transactions are decoded by POSTing to a public `/cosmos/tx/v1beta1/decode` endpoint. Each message goes to a handler in `types_script/`, chosen by its `@type` through `type.json`. Addresses are de-duplicated into a shared `address` table. `Txs.sql` defines 41 tables.
+
+**Baseline throughput:** 38 test blocks (48 transactions) take 81 to 86 seconds, about **0.45 blocks/s or 0.6 tx/s**. This was measured in a cloud container against a local PostgreSQL 16, with live decoding.
+
+**Commits from the bug-fix pass** (on `claude/quirky-feynman-v7wozd`, on top of `main` at `a4db1e3`):
+
+| Commit | Contents |
+|---|---|
+| `5084694` | Fix data-corruption and crash bugs in the loading pipeline |
+| `38dc3c8` | Restore the line-5 block fixer, export `$txt`, add tests for each bug |
+| `e6ad903` | Local PostgreSQL setup instructions in the README |
+
+**Tests:** `python3 -m unittest discover -s tests` runs 27 tests: 16 without a database, plus 11 that need PostgreSQL (see the README). Every test written for a bug fails on `a4db1e3` and passes after the fixes.
+
+---
+
+## 2. Issues fixed
+
+| # | Where | Problem | Effect | Fix | Test |
+|---|---|---|---|---|---|
+| 1 | `functions.py` `decode_tx` | Base URLs joined to `cosmos/tx/...` without a `/`, and `url_array[retries]` used with `max_retries=10` and only 3 URLs | The two fallback endpoints produced invalid URLs (`...stakeflow.iocosmos/...`); a 4th retry raised `IndexError` instead of returning `None` | `rstrip('/') + '/cosmos/...'` and `url_array[retries % len(url_array)]`; also retry on 429 and 500 | `test_decode_tx.py` |
+| 2 | `loading_tx.py` | After a `UniqueViolation`, the existing transaction was looked up with `WHERE block_id = ...` | On a **re-run**, every later transaction's messages were saved under the block's first transaction. Their comments differ, so `UNIQUE(tx_id, comment)` did not catch the duplicates. Never happens on a first run, which is why the tests passed | Look up by `tx_hash, chain_id, height` | `RerunTest` |
+| 3 | `loading_tx.py`, `verify_tx.py` | Block looked up with `WHERE height = '...'` only | With two chains loaded, transactions can attach to the other chain's block | `WHERE chain_id = %s AND height = %s` (parameterized) | `ChainIdTest` |
+| 4 | `address_load.py` | `length_after_1 >= 38` (contract) tested before `== 38` (user) | Every wallet labelled `contract`; the `user` branch could never run | Test `== 38` first, then `> 38`; take the separator as the **last** `1` (`rfind`); move the logic into `classify_address()` | `test_address_classification.py` |
+| 5 | `loading_tx.py` | `continue` for an unknown message type skipped `i += 1` | Messages after an unknown one got the wrong number. Once a handler is added and the block re-indexed, their comment changes and they are inserted again | `for i, message in enumerate(messages, start=1)` | `MessageNumberingTest` |
+| 6 | `load_transactions.sh` | `txt` never exported (the export was commented out in v1.3) | Any unknown message type crashed `loading_tx.py` in `new_type()` with `FileNotFoundError: 'None/new_type.txt'`; the rest of that transaction's messages were lost silently | `export txt` | `test_exports_log_folder_to_python_scripts` |
+| 7 | `check_one_file.py` | Block fixer called `checkLine(file_name, 1)`: wrong number of arguments, `1` instead of `5`, and `file_name` instead of `file_path` | `TypeError`, exit 1 instead of 8, and the shell only stops on 8, so it went on to load the schema-invalid block | Restored as intended: remove line 5 of `file_path`, log the removed text, exit 8 | `CheckOneFileTest` |
+| 8 | `loading_files.py` | `sys` used in the error handler but not imported | A bad block raised `NameError` instead of naming the block | `import sys` | `LoadingFilesTest` |
+| 9 | `verify_tx.py` | Always exited 0; `if row is None` (but `fetchall()` returns `[]`); expected `fee_denom "0"` for a transaction with no fee while the loader stores `""` | Verification could never flag a failure; a missing row crashed with `IndexError`; no-fee transactions always "mismatched" | Exit 1 on any mismatch or missing row; `len(row) != 1`; same no-fee defaults as the loader | `VerifyTxTest` |
+| 10 | `load_transactions.sh` | `psql -h localhost` hard-coded | `db_host` and `db_port` in `info.json` ignored | `-h "$DBHOST" -p "$DBPORT"` | `test_uses_port_from_info_json` |
+| 11 | `load_transactions.sh` | `loading_tx.py`'s exit status never checked | Load failures were invisible | Check it; skip verification for that transaction; count failures | `test_loading_tx_failure_...` |
+| 12 | `load_transactions.sh` | `"(Exit code $?)"` printed after a `[[ ]]` test | Printed the test's status, not the script's; `echo "..." 6` printed a literal 6 | Save `status=$?` straight after each command | `test_verify_tx_failure_...` |
+| 13 | `load_transactions.sh` | `python` and `python3` branches duplicated and drifted apart | A failed block verification ended the run in one branch and only warned in the other | One path using `$PY` | (covered by the shell tests) |
+| 14 | `functions.py` | `"^\d+$"` in normal strings | `SyntaxWarning` in every error log | Raw strings `r"^\d+$"` | (syntax check) |
+| 15 | `address_load.py`, `loading_tx.py`, `verify_tx.py` | SQL built with f-strings | Breaks on a quote in the value; injection risk | Parameterized queries | (covered above) |
+| 16 | repo | No `.gitignore`; 11 `__pycache__/*.pyc` files committed | Noise in the repo; `info.json` credentials easy to commit | `.gitignore` for `info.json`, bytecode and `log/` | n/a |
+
+---
+
+## 3. Issues still open
+
+These were found but left alone, either because the revamp replaces the code or because they need a decision.
+
+### Correctness
+- **`check_file` repair path (`functions.checkLine`).** On invalid JSON it deletes line `len(lines) - 1`, the second-to-last line, which may not be the bad one. `checkLine` also has bugs: `N >= len(lines)` makes the last line impossible to target; `print(foundError, sys.stderr)` prints to stdout; and its bare `except:` also catches `SystemExit` from the `check_file` call it makes.
+- **The line-5 fixer can damage good blocks.** If a block fails the schema for any other reason, each run deletes another line. Line 5 is normally `"total": 1,`, which the schema requires, so removing it cannot make a block valid on its own. Removed lines are logged to `error.log`.
+- **Only the first fee coin is stored** (`fee.amount[0]`). Transactions that pay fees in several denoms lose the rest.
+- **Address extraction only looks at a message's top-level keys** whose names contain `send`, `receiver`, `addr`, `grante`, `admin` or `voter`. Addresses in nested fields, such as the messages inside a `MsgExec`, are not linked.
+- **`address.created_at` uses `datetime.now()`**, which is local time with no timezone, while other timestamps are UTC.
+- **`verify_block.py` looks the block up by `block_hash` alone**, not by `(chain_id, height)`.
+- **No transaction outcome:** the decode endpoint returns only the transaction body, so success/failure (`code`), `gas_used` and events are never stored.
+
+### Reliability
+- **Nothing is atomic.** The block row, each transaction and each message are committed separately, often on different connections. A crash leaves a half-loaded block.
+- **No checkpoint.** A restart re-processes the whole folder.
+- **One schema-invalid block stops the whole run** (`die` on exit 8).
+- **Logs are deleted at the start of every run** (`output.log`, `error.log`, `output2.log`, `test.log`).
+- **Handlers swallow `UniqueViolation`** without rolling back or closing their connection.
+
+### Throughput (per transaction)
+- 2 Python processes are started (`loading_tx.py` and `verify_tx.py`).
+- The block file is read and parsed again in each of them.
+- 2 HTTP decode calls are made for the same bytes (load and verify).
+- A new database connection is opened for the transaction, for **every address** (`address_load.main`) and for **every message** (each handler).
+- Handlers are found through `importlib` and `sys.path.append` on every message.
+
+### Schema
+- **Numbers stored as text:** `height`, `tx_num`, `fee_amount` and `gas_limit` are `VARCHAR`, so `height > 7000000` and `ORDER BY height` compare text (`'9' > '10'`).
+- **Uniqueness depends on English sentences:** message tables are `UNIQUE(tx_id, comment)` (35 tables), and `comment` is text like "This is number 2 message in number 3 transaction".
+- **Redundant indexes:** for example, `UNIQUE (chain_id, height)` already creates an index, and `blocks_chain_id_height` plus `blocks_chain_id_hash_height` duplicate it. `transactions` and `address` have the same problem.
+- **Hard to answer "everything involving address X":** addresses are spread across about 37 message tables, each with its own `*_address_id` columns.
+
+### Housekeeping
+- The README clone URL points to the `Shikhar-G` fork.
+- `load_transactions.sh`'s header contains a teammate's personal phone number. It is also in the git history.
+- `types_script/functions.py` duplicates `create_connection` (and prints on every connect).
+
+---
+
+## 4. Where blocks come from now
+
+*Checked from a cloud container on 2026-11-01. Public infrastructure changes, so re-check before relying on it.*
+
+- **The test blocks are from Migaloo (`migaloo-1`), not Terra.** Their shape (`block_id` / `block` / `sdk_block`) is exactly what `GET /cosmos/base/tendermint/v1beta1/blocks/{height}` returns.
+- **Migaloo looks unreachable.** Every node in the chain registry failed: publicnode REST 404, Kleomedes SSL error 525, Polkachu upstream failure, cosmos.directory 502.
+- **Terra (`phoenix-1`) is live**, with the head at about 23,558,7xx on 2026-11-01. It returns the same block shape and uses the same module families: Cosmos SDK, CosmWasm, IBC and Alliance. The existing tables and handlers carry over almost unchanged, and the Terra decode endpoint already decoded the Migaloo test transactions.
+- **History available from public nodes:**
+
+  | Source | Range |
+  |---|---|
+  | `terra-rest.publicnode.com` | Height 22,711,258 onward (2026-09-06, about 2 months); older blocks are deleted as new ones arrive |
+  | `terra-api.polkachu.com` | Height 15,601,678 onward, with gaps (22,000,000 returned "nil Block") |
+  | From genesis | Needs a paid archive provider or your own node restored from a snapshot |
+
+- **One request per block for decoded transactions:** `GET /cosmos/tx/v1beta1/txs/block/{height}` returns the raw block *and* every transaction decoded. This replaces 2 decode calls per transaction. Notes:
+  - It pages its results, so blocks with many transactions need follow-up requests using `pagination.next_key`.
+  - It does **not** include transaction results. Success/failure, `gas_used` and events would need one more request per block (CometBFT RPC `/block_results?height=H`; not yet tried).
+  - The transaction hash is still computed locally: SHA-256 of the raw bytes in `block.data.txs`, which are in the same order as the decoded `txs`.
+
+---
+
+## 5. Revamp plan
+
+**Decisions:** Terra `phoenix-1`; one long-running Python service; **Strawberry + FastAPI** for GraphQL; protobuf decoding only if it turns out to be needed.
+
+### 5.1 Ingestion service
+
+Replace the shell loop and the per-transaction scripts with one Python process:
+
+```
+ BlockSource ──> Parser ──> Handlers ──> Writer ──> PostgreSQL
+ (REST, files)   (once      (imported    (pool, one
+                  per block)  once)       transaction
+                                          per block)
+```
+
+- **BlockSource** has two implementations:
+  - **REST:** `/cosmos/tx/v1beta1/txs/block/{h}`, rotating between several endpoints with backoff on 429 and 5xx, plus a per-endpoint rate limit.
+  - **Files:** reads the existing folders of block files, for tests and the Migaloo fixtures.
+- **Parser:** parse each block once into plain data objects (block, transactions, messages). Nothing reads the block file again.
+- **Handlers:** load the registry from `type.json` once at startup. Each handler **returns rows** instead of opening a connection and writing. Unknown types are recorded in an `unknown_messages` table with their raw JSON, instead of `new_type.txt`.
+- **Writer:**
+  - One `psycopg` connection pool for the whole service.
+  - **One database transaction per block**, so a block is saved completely or not at all.
+  - `INSERT ... ON CONFLICT DO NOTHING` instead of catching `UniqueViolation`.
+  - Addresses are inserted in bulk per block, using a small in-memory cache of already-known addresses.
+- **Protobuf (only if necessary):** not needed for the REST source, because transactions arrive decoded. Add it only if offline decoding of raw bytes is needed (Migaloo fixtures, an RPC-only source). Until then, keep a `Decoder` interface with the HTTP decoder behind it.
+
+### 5.2 Reliability
+- **`checkpoints(chain_id, last_height)`**, updated in the same database transaction as the block, so a restart resumes exactly where it stopped.
+- **`failed_blocks(chain_id, height, error, attempts, last_tried)`:** retry a few times with backoff, then record the block and move on instead of stopping.
+- **Idempotent re-runs:** loading a block twice changes nothing. The current `RerunTest` carries over as an invariant.
+- **Verification** becomes a check inside the write transaction (row counts per block) plus an optional sampled re-fetch, not 2 extra processes per transaction.
+
+### 5.3 Concurrency
+- **Backfill:** N workers each take a height range from a queue. Each block is written in its own database transaction, so workers don't need to coordinate beyond the queue.
+- **Head follower:** a single loop that polls `blocks/latest` and indexes new blocks in order.
+- **Measure before tuning.** Public endpoints rate-limit, so the bottleneck will probably be the network, not Python. Compare against the 0.45 blocks/s baseline in section 1.
+
+### 5.4 Schema migration
+- `height`, `tx_num`, `gas_limit` as `BIGINT`; amounts as `NUMERIC` (they can exceed 64 bits).
+- Replace `UNIQUE(tx_id, comment)` with `msg_index INT` and `UNIQUE(tx_id, msg_index)`. Keep `comment` only if it's still wanted for display.
+- Store every fee coin, in `transaction_fees(tx_id, denom, amount)` or as JSONB.
+- Add `message_addresses(message_table, message_id, address_id, role)` so "all activity for an address" is one indexed lookup.
+- Optionally store transaction results (`code`, `gas_used`, events) if `/block_results` is added.
+- Drop the redundant indexes.
+- Ship it as numbered migration files instead of editing `Txs.sql` in place.
+
+### 5.5 GraphQL (Strawberry + FastAPI)
+- **Types:** `Block`, `Transaction`, a `Message` interface with one type per message table, and `Address`.
+- **Queries:**
+  - `block(chainId, height)`, `blocks(range, first, after)`
+  - `transaction(hash)`, `transactions(filter: {height range, messageType, address}, first, after)`
+  - `address(value) { messages(first, after) }`
+- **Paging:** cursor-based (`first` / `after`), ordered by `(height, tx index, msg_index)`.
+- **N+1 queries:** Strawberry DataLoaders for transaction → messages, message → addresses, and transaction → block.
+- **Read-only**, with its own connection pool and limits on query depth and complexity.
+
+### 5.6 Testing
+- Keep the current `unittest` suite running against the old scripts until each piece is replaced, then port the tests to the new modules.
+- Fixture-based tests for each handler, using saved decoded transactions with no network.
+- An end-to-end test: a file source with the test blocks → database → GraphQL query → expected JSON.
+
+---
+
+## 6. Open decisions
+
+1. **Line-5 fixer:** blocks from the REST source come straight from a node as JSON, so the file fixers have nothing to repair there. Keep them only for the file source, or drop them?
+2. **Backfill range:** start from the oldest height publicnode serves (about 2 months), from Polkachu's 15.6M with its gaps, or only follow the head?
+3. **Transaction results:** add `/block_results` (one more request per block) to store success/failure and events?
+4. **Migaloo:** keep the 38 Migaloo blocks only as fixtures, or also support `migaloo-1` as a chain if a working node turns up?
+5. **Deployment:** run everything under Docker Compose (database, indexer, API), or only the database?
