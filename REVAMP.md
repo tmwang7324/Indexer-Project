@@ -129,7 +129,7 @@ The stored figure leaves out the `messages` copy, the per-type tables and indexe
 
 ## 5. Revamp plan
 
-**Decisions:** Terra `phoenix-1`; one long-running Python service; **Strawberry + FastAPI** for GraphQL; protobuf decoding only if it turns out to be needed.
+**Decisions:** Terra `phoenix-1`; one long-running Python service; **Strawberry + FastAPI** for GraphQL; no protobuf decoding (D6).
 
 ### 5.1 Ingestion service
 
@@ -153,7 +153,7 @@ Replace the shell loop and the per-transaction scripts with one Python process:
   - **One database transaction per block**, so a block is saved completely or not at all.
   - `INSERT ... ON CONFLICT DO NOTHING` instead of catching `UniqueViolation`.
   - Addresses are inserted in bulk per block, using a small in-memory cache of already-known addresses.
-- **Protobuf (only if necessary):** not needed for the REST source, because transactions arrive decoded. Add it only if offline decoding of raw bytes is needed (Migaloo fixtures, an RPC-only source). Until then, keep a `Decoder` interface with the HTTP decoder behind it.
+- **No protobuf (D6):** the REST source returns transactions and events already decoded to JSON, and the transaction hash is SHA-256 of the raw bytes in `block.data.txs`, so nothing needs protobuf. The HTTP `decode_tx` call and its endpoint list are removed. The base64-protobuf `data` field of each transaction result is not stored.
 
 ### 5.2 Reliability
 - **`checkpoints(chain_id, last_height)`**, updated in the same database transaction as the block, so a restart resumes exactly where it stopped.
@@ -215,3 +215,4 @@ Decisions agreed while reviewing this plan, newest last. Where a decision change
 | D3 | How much history to backfill? | **25,000 blocks by default, configurable** (revised from ~100,000 after the D4 measurements). Follow the chain head, and backfill the last 25,000 blocks, about 1.7 days at ~5.8 s per block. The start height is a command-line option. | From the measured sample: about 8,300 transactions, ~2.1 GiB downloaded in 50,000 requests, and ~150-300 MB in Postgres. Local storage is not the limit; load on free public nodes is. Enough for steady-state throughput runs and kill-and-resume tests. Larger ranges stay available as an optional benchmark. Backfill and head-following run side by side, so the indexer must handle a gap between where the backfill stops and where the head follower started. |
 | D4 | Store transaction results? | **Outcome and transaction events.** Fetch `/block_results` for every block and store each transaction's `code`, `codespace`, `gas_wanted`, `gas_used` and `log`, plus its events as JSONB. Block-level events are skipped. | Failed transactions are flagged instead of being indexed as if they succeeded (a failed `MsgSend` no longer looks like a transfer), and CosmWasm contract activity can be queried from the events. Costs a second request per block; both responses together are about 90 KiB per block. The two responses must be matched by height and transaction position. |
 | D5 | Save fetched blocks locally for replay? | **Record and replay.** The REST source can save each block's two raw responses, gzipped, and later runs can read from that cache instead of the network. | About 19 KiB per block on disk (roughly 470 MiB for 25,000 blocks). The 25,000 blocks are downloaded once, not on every run. Throughput numbers measure the indexer itself and are reproducible, and reliability tests inject failures through the cache. Network throughput is measured separately, on recording runs. The cache folder must be git-ignored. |
+| D6 | Is protobuf decoding needed? | **No.** Transactions from `/cosmos/tx/v1beta1/txs/block/{h}` arrive as JSON with nested messages expanded, and `/block_results` events are plain strings on Terra's CometBFT 0.38.19 (checked 2026-11-02); the transaction hash is SHA-256 of the raw bytes. | No protobuf library or generated Terra types, and no `Decoder` abstraction. `decode_tx` and its 2 HTTP calls per transaction go away. The `data` field of transaction results (base64 protobuf, message return values) is not stored. The Migaloo test blocks stay usable through the saved decoded fixtures. Revisit only if an RPC-only source or a CometBFT 0.34 node (base64 event attributes) is ever needed. |
