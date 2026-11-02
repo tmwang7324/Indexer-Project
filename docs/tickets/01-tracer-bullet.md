@@ -18,7 +18,7 @@
 - **Out:** typed tables, addresses, outcomes, Terra, threads, verification.
 
 ## Spec
-- `python -m indexer run --source files:test_blocks` indexes every block file that has a decoded fixture. Other files are reported and skipped; decoding raw Migaloo bytes is out of scope (D6, D12).
+- `python -m indexer run --source files:test_blocks` indexes every block file that has a decoded fixture. Until ticket 15 adds local decoding (D26), other files are reported and skipped.
 - **Writer:** each insert takes a cursor and never commits; `write_block()` does `BEGIN … COMMIT` around a whole block. Inserts use `ON CONFLICT DO NOTHING`, then look up the existing id when no row is returned.
 - **Transaction hash:** SHA-256 of the raw bytes, uppercase hex (as `hash_to_hex` does today).
 - **pytest:**

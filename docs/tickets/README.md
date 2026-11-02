@@ -5,7 +5,8 @@ The plan in `REVAMP.md`, broken into **vertical slices**. Each ticket delivers s
 ## Order
 
 ```
-01 Tracer bullet ──┬─> 02 Typed messages ──> 03 Addresses ──┐
+01 Tracer bullet ──┬─> 15 Decode raw bytes locally
+                   ├─> 02 Typed messages ──> 03 Addresses ──┐
                    │                                         ├─> 11 GraphQL paging & filters
                    ├─> 04 Terra from replay cache ──┬────────┘
                    │                                ├─> 05 Record from live nodes
@@ -31,6 +32,7 @@ The plan in `REVAMP.md`, broken into **vertical slices**. Each ticket delivers s
 | 12 | [Legacy pipeline coexistence](12-legacy-coexistence.md) | Integration | 01 |
 | 13 | [Compose for everything](13-compose-everything.md) | E2E | 10, 11, 12 |
 | 14 | [Old-vs-new benchmark command](14-benchmark.md) | Integration | 04, 12 |
+| 15 | [Decode raw transaction bytes locally](15-decode-raw-bytes.md) | E2E | 01 |
 
 ## Shared conventions
 
@@ -39,6 +41,8 @@ The plan in `REVAMP.md`, broken into **vertical slices**. Each ticket delivers s
 indexer/            the new service (package)
   sources/          files.py, replay.py, rest.py
   parse.py          one parse per block → Block / Transaction / Message objects
+  decode.py         raw transaction bytes → node-identical JSON (D26)
+  proto/            generated protobuf classes (committed; regenerate with buf)
   handlers/         one module per message type; each returns its typed row
   writer.py         one database transaction per block; inserts take a cursor and never commit
   verify.py         count checks (D14) and the sampled verify command
@@ -54,6 +58,7 @@ tests/indexer/      unit/ component/ integration/ e2e/ + conftest.py
 ```
 python -m indexer run --source files:<dir> | replay:<dir> | rest [--record <dir>] [--from-height N] [--workers N]
 python -m indexer verify --sample N [--source ...]
+python -m indexer decode <block files>
 ```
 
 **Database:** the new indexer owns the `indexer` schema; the old pipeline uses `legacy` (D9). Settings come from environment variables (`INDEXER_DB_HOST`, `INDEXER_DB_PORT`, `INDEXER_DB_NAME`, `INDEXER_DB_USER`, `INDEXER_DB_PASSWORD`) (D13).
@@ -77,8 +82,8 @@ python -m indexer verify --sample N [--source ...]
 | U5 | 02 | C2 | 01 / 02 / 03 / 04 / 07 | I5 | 09 |
 | U6 | 07 | C3 | 04 | I6 | 07 / 08 |
 | U7 | 05 | C4 | 06 | I7 | 09 |
-| U8 | 09 | C5 | 06 | E1 | 01 / 02 / 03 / 04 / 11 |
+| U8 | 09 | C5 | 06 | E1 | 01 / 02 / 03 / 04 / 11 / 15 |
 | I8 | 05 | I9 | 10 | I10 | 12 |
-| I11 | 14 | E2 | 13 | | |
+| I11 | 14 | E2 | 13 | U12 | 15 |
 
-**Every decision has a home:** D1 all · D2 01, 02, 03 · D3 10 · D4 04 · D5 04, 05 · D6 04 · D7 07, 08 · D8 12 · D9 01, 12, 14 · D10 14 · D11 12 · D12 01, 03 · D13 01, 12, 13 · D14 06 · D15 01, 11, 13 · D16 10 · D17 01 · D18 01 · D19 01 · D20 01 · D21 09 · D22 08, 09 · D23 01 · D24 04 · D25 01
+**Every decision has a home:** D1 all · D2 01, 02, 03 · D3 10 · D4 04 · D5 04, 05 · D6 04, 15 · D7 07, 08 · D8 12 · D9 01, 12, 14 · D10 14 · D11 12 · D12 01, 03 · D13 01, 12, 13 · D14 06 · D15 01, 11, 13 · D16 10 · D17 01 · D18 01 · D19 01 · D20 01 · D21 09, 15 · D22 08, 09 · D23 01 · D24 04 · D25 01 · D26 15

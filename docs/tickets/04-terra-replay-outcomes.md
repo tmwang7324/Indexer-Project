@@ -18,7 +18,7 @@
 
 ## Spec
 - **Replay cache layout:** `<dir>/<chain_id>/<height>.txs.json.gz` and `<height>.results.json.gz`, holding the raw response bytes unchanged.
-- **No protobuf (D6):** transactions arrive decoded; the hash is computed from `block.data.txs`; the base64 `data` field is not stored.
+- **No protobuf on this path (D6):** transactions arrive decoded; the hash is computed from `block.data.txs`; the base64 `data` field is not stored.
 - **Pagination:** a `txs/block` response with `pagination.next_key` set needs its follow-up pages, which are cached as `<height>.txs.<n>.json.gz`.
 
 ## Acceptance criteria
