@@ -118,6 +118,31 @@ MAX_LIMIT = 1000
 
 
 @strawberry.type
+class AddressMessage:
+    role: str
+    message: Message
+
+
+@strawberry.type
+class Address:
+    value: str
+    type: str
+    _address_id: strawberry.Private[int]
+
+    @strawberry.field(description="Every message that mentions this address, oldest first, with the address's role.")
+    async def messages(self, limit: int = 100) -> list[AddressMessage]:
+        rows = await db.fetch(
+            """SELECT m.message_id, m.tx_id, m.msg_index, m.type, m.raw, ma.role
+               FROM message_addresses ma
+               JOIN messages m ON m.message_id = ma.message_id
+               JOIN transactions t ON t.tx_id = m.tx_id
+               WHERE ma.address_id = %s
+               ORDER BY t.height, t.tx_index, m.msg_index, ma.role LIMIT %s""",
+            (self._address_id, max(0, min(limit, MAX_LIMIT))))
+        return [AddressMessage(role=r["role"], message=Message.from_row(r)) for r in rows]
+
+
+@strawberry.type
 class Query:
     @strawberry.field
     async def block(self, chain_id: str, height: int) -> Optional[Block]:
@@ -134,6 +159,13 @@ class Query:
         r = await db.fetch_one(f"SELECT {TX_COLUMNS} FROM transactions WHERE tx_hash = %s", (hash.upper(),))
         return None if r is None else Transaction.from_row(r)
 
+
+    @strawberry.field
+    async def address(self, value: str) -> Optional[Address]:
+        r = await db.fetch_one("SELECT address_id, value, address_type FROM address WHERE value = %s", (value,))
+        if r is None:
+            return None
+        return Address(value=r["value"], type=r["address_type"], _address_id=r["address_id"])
 
     @strawberry.field(description="Messages of one type, oldest first. Cursor paging replaces `limit` later.")
     async def messages(self, type: str, chain_id: Optional[str] = None, limit: int = 100) -> list[Message]:

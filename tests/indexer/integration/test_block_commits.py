@@ -74,3 +74,23 @@ def test_unknown_message_type_is_stored_without_a_typed_copy(clean_db):
         check_invariants(conn)
     finally:
         conn.close()
+
+
+def test_an_address_used_in_several_messages_is_stored_once(clean_db):
+    """The relayer signs both messages of transaction 1: one address row, two links with the same role."""
+    relayer = "migaloo18xrruhq5r246mwk0yj9elnn3mte8xa9udpjhej"
+    conn = connect(clean_db)
+    try:
+        writer.write_block(conn, BLOCK)
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM address WHERE value = %s", (relayer,))
+            assert cur.fetchone() == (1,)
+            cur.execute("""SELECT m.type, ma.role FROM message_addresses ma
+                           JOIN address a USING (address_id) JOIN messages m USING (message_id)
+                           WHERE a.value = %s ORDER BY m.msg_index""", (relayer,))
+            assert cur.fetchall() == [("/ibc.core.client.v1.MsgUpdateClient", "signer"),
+                                      ("/ibc.core.channel.v1.MsgAcknowledgement", "signer")]
+        conn.rollback()
+        check_invariants(conn)
+    finally:
+        conn.close()

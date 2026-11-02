@@ -8,8 +8,9 @@ import logging
 from typing import Optional
 
 from psycopg2 import sql
-from psycopg2.extras import Json
+from psycopg2.extras import Json, execute_values
 
+from .addresses import classify_address
 from .handlers import Registry, get_registry
 from .handlers.spec import HandlerResult
 from .models import Block, Message, Transaction
@@ -87,20 +88,52 @@ def insert_typed(cur, message_id: int, result: HandlerResult) -> None:
         _insert_row(cur, table, {"message_id": message_id, **row})
 
 
+def insert_addresses(cur, values) -> dict:
+    """Insert each distinct address once and return {address: address_id}.
+
+    ON CONFLICT DO NOTHING plus a lookup, in bulk: addresses already known keep their id.
+    """
+    distinct = sorted(set(values))
+    if not distinct:
+        return {}
+    execute_values(
+        cur,
+        "INSERT INTO address (value, address_type) VALUES %s ON CONFLICT DO NOTHING",
+        [(a, classify_address(a)) for a in distinct],
+    )
+    cur.execute("SELECT value, address_id FROM address WHERE value = ANY(%s)", (distinct,))
+    return dict(cur.fetchall())
+
+
+def insert_message_addresses(cur, message_id: int, links) -> None:
+    """links: [(address_id, role)]."""
+    for address_id, role in links:
+        cur.execute(
+            "INSERT INTO message_addresses (message_id, address_id, role) VALUES (%s, %s, %s) "
+            "ON CONFLICT DO NOTHING", (message_id, address_id, role))
+
+
 def write_block_rows(cur, block: Block, registry: Optional[Registry] = None) -> int:
     """All the rows of one block, on an open transaction. Returns the block id."""
     registry = registry or get_registry()
+    # Handlers are pure, so run them all first: the block's addresses are inserted together.
+    results = {(tx.index, msg.index): registry.handle(msg.type, msg.raw)
+               for tx in block.transactions for msg in tx.messages}
+    address_ids = insert_addresses(
+        cur, (a for r in results.values() if r for _, a in r.addresses))
+
     block_id = insert_block(cur, block)
     for tx in block.transactions:
         tx_id = insert_transaction(cur, block_id, block, tx)
         for msg in tx.messages:
             message_id = insert_message(cur, tx_id, msg)
-            result = registry.handle(msg.type, msg.raw)
+            result = results[(tx.index, msg.index)]
             if result is None:
                 log.info("no handler for message type %s (block %s/%s): stored in messages only",
                          msg.type, block.chain_id, block.height)
-            else:
-                insert_typed(cur, message_id, result)
+                continue
+            insert_typed(cur, message_id, result)
+            insert_message_addresses(cur, message_id, [(address_ids[a], role) for role, a in result.addresses])
     return block_id
 
 

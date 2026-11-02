@@ -1,4 +1,4 @@
-"""C2 (typed row) and the contract between the handlers and the migrated schema."""
+"""C2 (typed row) and the contract between the handlers and the migrated schema, addresses included."""
 import pytest
 
 from indexer import writer
@@ -37,6 +37,11 @@ def test_handler_output_fits_the_migrated_table(conn, type_url):
     with conn.cursor() as cur:
         message_id = _message_id(cur, msg)
         writer.insert_typed(cur, message_id, result)
+        ids = writer.insert_addresses(cur, (a for _, a in result.addresses))
+        writer.insert_message_addresses(cur, message_id, [(ids[a], role) for role, a in result.addresses])
+        cur.execute("SELECT a.value, ma.role FROM message_addresses ma JOIN address a USING (address_id) "
+                    "WHERE ma.message_id = %s", (message_id,))
+        assert sorted(cur.fetchall()) == sorted((a, role) for role, a in set(result.addresses))
         cur.execute(f"SELECT count(*) FROM {handler.table} WHERE message_id = %s", (message_id,))
         assert cur.fetchone()[0] == 1
         for side in handler.side_tables:

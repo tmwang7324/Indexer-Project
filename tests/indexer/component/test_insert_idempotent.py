@@ -42,3 +42,18 @@ def test_insert_is_idempotent(conn, name):
         cur.execute(select)
         rows = [r[:len(expected[0])] for r in cur.fetchall()]
     assert rows == expected
+
+
+def test_address_insert_is_idempotent(conn):
+    addresses = ["migaloo194ytn50yhh67rdha8akhs7c6zulnz4n2yrqeed",
+                 "migaloovaloper16skk5gcmazhkv945gauuuhlugd099ltnf9qkey"]
+    with conn.cursor() as cur:
+        first = writer.insert_addresses(cur, addresses + addresses[:1])    # duplicates in one call
+        second = writer.insert_addresses(cur, addresses[::-1])
+        assert first == second and len(first) == 2
+        cur.execute("SELECT value, address_type, created_at FROM address ORDER BY value")
+        rows = cur.fetchall()
+    assert [(v, t) for v, t, _ in rows] == [
+        ("migaloo194ytn50yhh67rdha8akhs7c6zulnz4n2yrqeed", "user"),
+        ("migaloovaloper16skk5gcmazhkv945gauuuhlugd099ltnf9qkey", "validator")]
+    assert all(created.utcoffset().total_seconds() == 0 for _, _, created in rows)   # UTC
