@@ -7,3 +7,8 @@ __pycache__/
 
 # Run logs written by load_transactions.sh
 log/
+
+# Test and coverage output
+.coverage
+.pytest_cache/
+htmlcov/

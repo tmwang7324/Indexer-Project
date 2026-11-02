@@ -1,0 +1,16 @@
+{
+  transaction(hash: "0C8142631647C6D126E55B35A35BBAF28CB1D407B2106532BB2FDABEFA70DC2E") {
+    hash
+    chainId
+    height
+    success
+    code
+    codespace
+    log
+    gasWanted
+    gasUsed
+    fee { denom amount }
+    events
+    messages { index type }
+  }
+}

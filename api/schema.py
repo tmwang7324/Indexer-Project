@@ -74,8 +74,21 @@ class Transaction:
     memo: str
     gas_limit: Optional[str]
     time: str
-    fee: list[Coin]
+    code: Optional[int] = strawberry.field(description="0 = success; null when the source has no outcome")
+    codespace: Optional[str]
+    success: Optional[bool]
+    gas_wanted: Optional[str]
+    gas_used: Optional[str]
+    log: Optional[str]
+    events: Optional[JSON]
     _tx_id: strawberry.Private[int]
+
+    @strawberry.field(description="Every fee coin.")
+    async def fee(self) -> list[Coin]:
+        rows = await db.fetch(
+            "SELECT denom, amount::text AS amount FROM transaction_fees WHERE tx_id = %s ORDER BY coin_index",
+            (self._tx_id,))
+        return [Coin(denom=r["denom"], amount=r["amount"]) for r in rows]
 
     @strawberry.field
     async def messages(self) -> list[Message]:
@@ -86,16 +99,20 @@ class Transaction:
 
     @classmethod
     def from_row(cls, r) -> "Transaction":
-        fee = (r["tx_info"].get("auth_info", {}).get("fee", {}).get("amount")) or []
+        def text(v):
+            return None if v is None else str(v)
+
         return cls(
             hash=r["tx_hash"], chain_id=r["chain_id"], height=r["height"], index=r["tx_index"],
-            memo=r["memo"], gas_limit=None if r["gas_limit"] is None else str(r["gas_limit"]),
-            time=_iso(r["created_at"]), fee=[Coin(denom=c["denom"], amount=c["amount"]) for c in fee],
+            memo=r["memo"], gas_limit=text(r["gas_limit"]), time=_iso(r["created_at"]),
+            code=r["code"], codespace=r["codespace"], success=None if r["code"] is None else r["code"] == 0,
+            gas_wanted=text(r["gas_wanted"]), gas_used=text(r["gas_used"]), log=r["log"], events=r["events"],
             _tx_id=r["tx_id"],
         )
 
 
-TX_COLUMNS = "tx_id, tx_hash, chain_id, height, tx_index, memo, gas_limit, created_at, tx_info"
+TX_COLUMNS = ("tx_id, tx_hash, chain_id, height, tx_index, memo, gas_limit, created_at, "
+              "code, codespace, gas_wanted, gas_used, log, events")
 
 
 @strawberry.type

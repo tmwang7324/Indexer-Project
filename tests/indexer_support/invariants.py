@@ -48,3 +48,36 @@ def counts(conn):
         row = cur.fetchone()
     conn.rollback()
     return row
+
+
+def snapshot(conn) -> dict:
+    """The database content with generated ids replaced by natural keys, for whole-output comparisons
+    (Rule 5): two runs that should give the same result must give equal snapshots."""
+    from indexer.handlers import ALL_HANDLERS
+
+    def rows(cur, sql, params=()):
+        cur.execute(sql, params)
+        return sorted(tuple(str(v) for v in r) for r in cur.fetchall())
+
+    snap = {}
+    with conn.cursor() as cur:
+        snap["blocks"] = rows(cur, "SELECT chain_id, height, block_hash, tx_num, created_at FROM blocks")
+        snap["transactions"] = rows(cur, """
+            SELECT chain_id, height, tx_index, tx_hash, memo, gas_limit, created_at, code, codespace,
+                   gas_wanted, gas_used, log, events, tx_info FROM transactions""")
+        snap["fees"] = rows(cur, """SELECT t.tx_hash, f.coin_index, f.denom, f.amount
+                                    FROM transaction_fees f JOIN transactions t USING (tx_id)""")
+        snap["messages"] = rows(cur, """SELECT t.tx_hash, m.msg_index, m.type, m.raw
+                                        FROM messages m JOIN transactions t USING (tx_id)""")
+        for h in ALL_HANDLERS:
+            for table in (h.table, *h.side_tables):
+                snap[table] = rows(cur, f"""SELECT t.tx_hash, m.msg_index, to_jsonb(x) - 'message_id'
+                                            FROM {table} x JOIN messages m USING (message_id)
+                                            JOIN transactions t USING (tx_id)""")
+        snap["address"] = rows(cur, "SELECT value, address_type FROM address")
+        snap["message_addresses"] = rows(cur, """
+            SELECT t.tx_hash, m.msg_index, a.value, ma.role FROM message_addresses ma
+            JOIN messages m USING (message_id) JOIN transactions t USING (tx_id)
+            JOIN address a USING (address_id)""")
+    conn.rollback()
+    return snap

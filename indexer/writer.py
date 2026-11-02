@@ -41,17 +41,31 @@ def insert_block(cur, block: Block) -> int:
 
 
 def insert_transaction(cur, block_id: int, block: Block, tx: Transaction) -> int:
-    return _insert_or_lookup(
+    o = tx.outcome
+    tx_id = _insert_or_lookup(
         cur,
         """INSERT INTO transactions
-               (block_id, chain_id, height, tx_index, tx_hash, memo, gas_limit, created_at, tx_info)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+               (block_id, chain_id, height, tx_index, tx_hash, memo, gas_limit, created_at, tx_info,
+                code, codespace, gas_wanted, gas_used, log, events)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT DO NOTHING RETURNING tx_id""",
         (block_id, block.chain_id, block.height, tx.index, tx.hash, tx.memo, tx.gas_limit,
-         block.time, Json(tx.info)),
+         block.time, Json(tx.info),
+         o and o.code, o and o.codespace, o and o.gas_wanted, o and o.gas_used, o and o.log,
+         o and Json(o.events)),
         "SELECT tx_id FROM transactions WHERE chain_id = %s AND tx_hash = %s",
         (block.chain_id, tx.hash),
     )
+    insert_fees(cur, tx_id, tx.fee)
+    return tx_id
+
+
+def insert_fees(cur, tx_id: int, coins: list) -> None:
+    """Every fee coin, not just the first one."""
+    for i, coin in enumerate(coins):
+        cur.execute(
+            "INSERT INTO transaction_fees (tx_id, coin_index, denom, amount) VALUES (%s, %s, %s, %s) "
+            "ON CONFLICT DO NOTHING", (tx_id, i, coin["denom"], coin["amount"]))
 
 
 def insert_message(cur, tx_id: int, msg: Message) -> int:

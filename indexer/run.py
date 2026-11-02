@@ -6,20 +6,23 @@ import sys
 from .db import connect
 from .errors import BadDataError
 from .sources.files import FilesSource
+from .sources.replay import ReplaySource
 from .writer import write_block
 
 log = logging.getLogger("indexer")
 
 
-def build_source(spec: str):
+def build_source(spec: str, from_height=None):
     kind, _, arg = spec.partition(":")
     if kind == "files" and arg:
         return FilesSource(arg)
-    raise SystemExit(f"unknown --source {spec!r} (expected files:<dir>)")
+    if kind == "replay" and arg:
+        return ReplaySource(arg, from_height=from_height)
+    raise SystemExit(f"unknown --source {spec!r} (expected files:<dir> or replay:<dir>)")
 
 
 def cmd_run(args) -> int:
-    source = build_source(args.source)
+    source = build_source(args.source, args.from_height)
     conn = connect()
     written = 0
     try:
@@ -41,7 +44,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="python -m indexer")
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="index blocks from a source")
-    run.add_argument("--source", required=True, help="files:<dir>")
+    run.add_argument("--source", required=True, help="files:<dir> or replay:<dir>")
+    run.add_argument("--from-height", type=int, default=None, help="skip heights below this (replay source)")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.command == "run":

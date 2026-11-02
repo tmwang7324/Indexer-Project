@@ -15,6 +15,7 @@ REPO = dbtools.REPO
 # One indexing run per module (Rule 6). Each entry is the arguments of `python -m indexer`.
 INDEX_RUNS = [
     ["run", "--source", "files:test_blocks"],
+    ["run", "--source", "replay:tests/indexer/data/terra"],
 ]
 
 
