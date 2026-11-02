@@ -22,9 +22,9 @@
 - **Pagination:** a `txs/block` response with `pagination.next_key` set needs its follow-up pages, which are cached as `<height>.txs.<n>.json.gz`.
 
 ## Acceptance criteria
-- [ ] Every curated block indexes; failed transactions have a non-zero `code` and their `log`.
-- [ ] A transaction with several fee coins stores every coin.
-- [ ] An amount larger than 64 bits is stored exactly.
+- [x] Every curated block indexes; failed transactions have a non-zero `code` and their `log`.
+- [x] A transaction with several fee coins stores every coin.
+- [x] An amount larger than 64 bits is stored exactly.
 
 ## Tests in this ticket
 | ID | Layer | Cases |

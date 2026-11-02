@@ -20,9 +20,9 @@
 - **Inserts:** addresses are inserted per block, de-duplicated, using `ON CONFLICT` plus a lookup; `created_at` is in UTC.
 
 ## Acceptance criteria
-- [ ] The same address used in several messages is stored once.
-- [ ] Every address field listed by a handler produces a `message_addresses` row with the right role.
-- [ ] The address query returns the classification and the linked messages.
+- [x] The same address used in several messages is stored once.
+- [x] Every address field listed by a handler produces a `message_addresses` row with the right role.
+- [x] The address query returns the classification and the linked messages.
 
 ## Tests in this ticket
 | ID | Layer | Cases |

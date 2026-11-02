@@ -350,3 +350,25 @@ A first draft of these layers came to about **130 test functions**; the list in 
 8. **Keep the suite slim:** `pytest --durations=10` shows the slowest tests, the coverage report (`--cov-report=term-missing`) shows untested lines, and a test that has never failed when the code around it was broken is a candidate for removal (mutation testing with `mutmut` finds those).
 
 The rules are kept, in a reusable form, in [`docs/TESTING_RULEBOOK.md`](docs/TESTING_RULEBOOK.md). The plan is broken into vertical-slice tickets in [`docs/tickets/`](docs/tickets/README.md).
+
+---
+
+## 9. Implementation notes (tickets 01 to 05)
+
+Where the first five tickets were built differently from, or beyond, what the tickets say. None of these changes a decision in section 7.
+
+| Ticket | Note |
+|---|---|
+| 01 | `test_blocks/` holds 29 of the 38 Migaloo blocks (the rest are in `test_blocks2/` and `test_blocks3/`). Only block 7027410 has a decoded fixture, so a run over `test_blocks/` indexes 1 block and reports 28 skipped until ticket 15. The files source looks for `<block file>.decoded.json`, then `<height>.decoded.json`, then `tests/fixtures/decoded/<height>.json` (override the folder with `INDEXER_DECODED_DIR`). |
+| 01 | Block time is stored as `timestamptz`, which has microsecond precision; the node reports nanoseconds. |
+| 01 | The legacy DB tests cannot share a database with the new schema yet: the old scripts create unqualified tables, and when the database user is called `indexer` they land in the `indexer` schema (the user's own schema is first on the default `search_path`). CI and the README run `pytest -m legacy` against a separate database until ticket 12 moves the old pipeline to a `legacy` schema (D9). |
+| 02 | There are 35 typed tables **plus** the 2 side tables (37 in total); the ticket text can be read either way. |
+| 02 | Handlers are grouped by module family (`bank.py`, `staking.py`, `ibc.py`, ...) rather than one module per type, and are declarative: a table, a column-to-path map and the address fields. Each is still a pure function from message JSON to a `HandlerResult`. |
+| 02 | Typed rows keep address values as plain text columns (so `details` is readable on its own); the shared `address` table and the links come with ticket 03. Large blobs (IBC proofs, client headers, wasm byte code) stay only in `messages.raw`; `MsgStoreCode` keeps `wasm_byte_code_size`. Multi-coin `MsgSend` keeps the first coin in columns and all coins in `coins`. |
+| 02 | GraphQL `Message.details` is a JSON object (the typed row, camelCase keys) rather than a union of 35 GraphQL types. Until cursor paging (ticket 11), the list queries take a `limit` (default 100, at most 1000). |
+| 03 | Empty address strings are not stored or linked (`classify_address("")` still returns `blank`). Roles: `sender`, `receiver`, `input`, `output`, `granter`, `grantee`, `allowed`, `delegator`, `validator`, `validator_src`, `validator_dst`, `voter`, `contract`, `admin`, `signer`. IBC `signer` addresses are linked, which the old pipeline did not do. |
+| 04 | The curated sample has 50 real `phoenix-1` blocks (1.1 MB gzipped) chosen from about 4,500 recent blocks. It covers 16 message types (one of them, `MsgGrantAllowance`, has no handler), 5 failed transactions, empty blocks, multi-message transactions and 6 consecutive heights (for the fake node). **No multi-coin fee turned up**, so that case is covered by a hand-made component test. `manifest.json` records why each block is there. |
+| 04 | Follow-up `txs/block` pages are cached as `<height>.txs.1.json.gz`, `<height>.txs.2.json.gz`, ... Gzip files are written with `mtime=0`, so the same bytes give the same file. |
+| 04 | The fee is no longer read from `tx_info`: `transaction_fees` holds every coin, and transactions without an outcome (Migaloo files) have NULL outcome columns. |
+| 05 | `--from-height` is required with `--source rest` until ticket 10 adds the default start (head minus 25,000); `--to-height` is new and defaults to the chain head. Endpoints come from `INDEXER_ENDPOINTS` (a JSON list, with a per-endpoint `rate` and `burst`) and the cool-down from `INDEXER_ENDPOINT_COOLDOWN`. Waiting for a cool-down is not counted as a fetch attempt. |
+| 05 | Checked once by hand against the real publicnode endpoints on 2026-11-02 (10 blocks fetched, recorded and replayed). No test calls a real node (D25). |

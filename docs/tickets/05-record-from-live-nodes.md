@@ -24,9 +24,9 @@
 - **No test calls a real node (D25).** The fake node is the only HTTP server tests use.
 
 ## Acceptance criteria
-- [ ] Indexing from the fake node equals indexing from the replay cache (same rows).
-- [ ] While endpoint A returns 429, requests go to endpoint B, and A is used again after its cool-down.
-- [ ] The measured request rate never exceeds the configured limit.
+- [x] Indexing from the fake node equals indexing from the replay cache (same rows).
+- [x] While endpoint A returns 429, requests go to endpoint B, and A is used again after its cool-down.
+- [x] The measured request rate never exceeds the configured limit.
 
 ## Tests in this ticket
 | ID | Layer | Cases |

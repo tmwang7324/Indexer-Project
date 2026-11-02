@@ -21,9 +21,9 @@
 - **Nested messages:** a `MsgExec`'s inner messages are stored inside its raw JSON; they are not split into their own rows in this ticket.
 
 ## Acceptance criteria
-- [ ] All 35 types in `type.json` have a handler and a test case.
-- [ ] A block containing an unknown type stores it in `messages` and indexes the rest of the block.
-- [ ] `messages(type: "/cosmos.gov.v1.MsgVote")` returns the typed vote fields.
+- [x] All 35 types in `type.json` have a handler and a test case.
+- [x] A block containing an unknown type stores it in `messages` and indexes the rest of the block.
+- [x] `messages(type: "/cosmos.gov.v1.MsgVote")` returns the typed vote fields.
 
 ## Tests in this ticket
 | ID | Layer | Cases |

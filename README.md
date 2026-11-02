@@ -152,6 +152,61 @@ INDEXER_TEST_DB_NAME=indexer_test INDEXER_TEST_DB_USER=indexer INDEXER_TEST_DB_P
 ```
 Transactions are decoded from saved fixtures in `tests/fixtures/decoded`, so the tests need no network access.
 
+# The new indexer (`indexer/`, `api/`)
+
+The revamp described in [REVAMP.md](REVAMP.md) lives next to the old pipeline, which stays as it is (D8). It is built
+ticket by ticket from [docs/tickets/](docs/tickets/README.md).
+
+```
+ files / replay cache / live nodes ──> parse ──> handlers ──> writer ──> PostgreSQL (schema `indexer`) ──> GraphQL API
+```
+
+## Setup
+```
+pip install -r requirements-dev.txt
+docker compose up -d postgres-test        # PostgreSQL 16 on 127.0.0.1:5433, thrown away when stopped
+```
+Settings come from environment variables; the defaults match the Compose test database:
+`INDEXER_DB_HOST`, `INDEXER_DB_PORT`, `INDEXER_DB_NAME`, `INDEXER_DB_USER`, `INDEXER_DB_PASSWORD`.
+Create the schema with `alembic upgrade head` (migrations are hand-written SQL in `migrations/versions/`).
+
+## Running
+```
+python -m indexer run --source files:test_blocks                 # Migaloo block files that have a decoded fixture
+python -m indexer run --source replay:tests/indexer/data/terra   # Terra blocks from a replay cache
+python -m indexer run --source rest --from-height N [--to-height M] [--record DIR]   # live Terra nodes
+python -m api                                                    # GraphQL at http://127.0.0.1:8000/graphql
+```
+`--record DIR` saves the raw responses of every fetched block (gzipped) into a replay cache, so later runs
+(`--source replay:DIR`) need no network. Public endpoints and their rate limits are in
+`indexer/sources/endpoints.py`; override them with `INDEXER_ENDPOINTS` (a JSON list) and
+`INDEXER_ENDPOINT_COOLDOWN` (seconds a failing endpoint is skipped).
+
+Example query:
+```graphql
+{ address(value: "migaloo1fc4kjfau480nr503yl0r8ml7vvn07d2r7ztjky") {
+    type
+    messages { role message { type details transaction { hash height } } } } }
+```
+
+## Tests
+```
+pytest -m unit            # no I/O
+pytest -m component       # needs postgres-test
+pytest -m integration     # needs postgres-test
+pytest -m e2e             # starts the indexer and the API as separate processes
+pytest -m legacy          # the old pipeline's tests
+pytest --update-golden    # rewrite expected-JSON files; review the diff before committing
+```
+The test database is `INDEXER_TEST_DB_*` (default `127.0.0.1:5433`, database `indexer_test`, user and password
+`indexer`). A missing database **fails** the database-backed tests; it never skips them. Until the legacy pipeline
+moves to its own schema (ticket 12), run the legacy tests against a separate database
+(`INDEXER_TEST_DB_NAME=legacy_test pytest -m legacy`): its scripts create unqualified tables, which would otherwise
+land in the `indexer` schema when the database user is called `indexer`.
+
+The curated Terra sample under `tests/indexer/data/terra/` (about 50 real `phoenix-1` blocks) was picked with
+`tools/curate_sample.py` from a local replay cache.
+
 # ERD
 [ERD for indexer](ERD.pdf)
 

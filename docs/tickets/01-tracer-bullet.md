@@ -30,10 +30,10 @@
 - **CI:** GitHub Actions on every push and pull request, with PostgreSQL 16 as a service container; runs all markers, plus `coverage report --include=<critical> --fail-under=90` and `--cov-fail-under=80`.
 
 ## Acceptance criteria
-- [ ] Indexing `test_blocks/` twice leaves the same rows (idempotent).
-- [ ] `block(chainId: "migaloo-1", height: 7027410)` returns the hash, time and 3 transactions.
-- [ ] `transaction(hash: "E77D14CB…5C20")` returns the vote transaction, with its memo, fee and 1 message.
-- [ ] CI runs on push and fails when any test or coverage floor fails.
+- [x] Indexing `test_blocks/` twice leaves the same rows (idempotent).
+- [x] `block(chainId: "migaloo-1", height: 7027410)` returns the hash, time and 3 transactions.
+- [x] `transaction(hash: "E77D14CB…5C20")` returns the vote transaction, with its memo, fee and 1 message.
+- [ ] CI runs on push and fails when any test or coverage floor fails. *(workflow written and its commands run locally; not yet seen running on GitHub)*
 
 ## Tests in this ticket
 | ID | Layer | Cases |
