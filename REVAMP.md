@@ -9,6 +9,7 @@ This file records what was found in the 2024 indexer, what has been fixed, what 
 4. [Where blocks come from now](#4-where-blocks-come-from-now)
 5. [Revamp plan](#5-revamp-plan)
 6. [Open decisions](#6-open-decisions)
+7. [Decisions log](#7-decisions-log)
 
 ---
 
@@ -110,8 +111,19 @@ These were found but left alone, either because the revamp replaces the code or 
 
 - **One request per block for decoded transactions:** `GET /cosmos/tx/v1beta1/txs/block/{height}` returns the raw block *and* every transaction decoded. This replaces 2 decode calls per transaction. Notes:
   - It pages its results, so blocks with many transactions need follow-up requests using `pagination.next_key`.
-  - It does **not** include transaction results. Success/failure, `gas_used` and events would need one more request per block (CometBFT RPC `/block_results?height=H`; not yet tried).
+  - It does **not** include transaction results. Those come from one more request per block, CometBFT RPC `/block_results?height=H`, which returns `code`, `codespace`, `gas_wanted`, `gas_used`, `log` and `events` for each transaction (checked on `terra-rpc.publicnode.com`, 2026-11-02).
   - The transaction hash is still computed locally: SHA-256 of the raw bytes in `block.data.txs`, which are in the same order as the decoded `txs`.
+
+**Measured on Terra, 2026-11-02** (150 blocks, one every 1,000 heights, back from the head):
+
+| Measure | Value |
+|---|---|
+| Transactions per block | 0.33 (most blocks are empty) |
+| Download per block (`txs/block` + `block_results`) | about 90 KiB |
+| Same, gzip-compressed | about 19 KiB (4.8x smaller) |
+| Stored per block (transaction JSON, outcome, transaction events, header) in Postgres, compression included | 5.8 KiB |
+
+The stored figure leaves out the `messages` copy, the per-type tables and indexes; with those, estimate 6 to 12 KiB per block. Storage is therefore not the limit; download volume and the number of requests to free public nodes are.
 
 ---
 
@@ -130,11 +142,12 @@ Replace the shell loop and the per-transaction scripts with one Python process:
                                           per block)
 ```
 
-- **BlockSource** has two implementations:
-  - **REST:** `/cosmos/tx/v1beta1/txs/block/{h}`, rotating between several endpoints with backoff on 429 and 5xx, plus a per-endpoint rate limit.
+- **BlockSource** has three implementations:
+  - **REST:** `/cosmos/tx/v1beta1/txs/block/{h}` plus `/block_results?height={h}` (D4), rotating between several endpoints with backoff on 429 and 5xx, plus a per-endpoint rate limit.
+  - **Replay cache (D5):** the REST source can record each block's two raw responses, gzipped, to a local folder (about 19 KiB per block, roughly 470 MiB for the 25,000-block backfill). Later runs read from the cache instead of the network.
   - **Files:** reads the existing folders of block files, for tests and the Migaloo fixtures.
 - **Parser:** parse each block once into plain data objects (block, transactions, messages). Nothing reads the block file again.
-- **Handlers:** load the registry from `type.json` once at startup. Each handler **returns rows** instead of opening a connection and writing. Unknown types are recorded in an `unknown_messages` table with their raw JSON, instead of `new_type.txt`.
+- **Handlers:** load the registry from `type.json` once at startup. Every message is written to the `messages` table (D2). A handler, when one exists for the type, **returns the typed row** for its per-type table instead of opening a connection and writing. An unknown type is simply a `messages` row with no typed copy, which replaces `new_type.txt`.
 - **Writer:**
   - One `psycopg` connection pool for the whole service.
   - **One database transaction per block**, so a block is saved completely or not at all.
@@ -155,15 +168,16 @@ Replace the shell loop and the per-transaction scripts with one Python process:
 
 ### 5.4 Schema migration
 - `height`, `tx_num`, `gas_limit` as `BIGINT`; amounts as `NUMERIC` (they can exceed 64 bits).
-- Replace `UNIQUE(tx_id, comment)` with `msg_index INT` and `UNIQUE(tx_id, msg_index)`. Keep `comment` only if it's still wanted for display.
+- Add `messages(message_id, tx_id, msg_index, type, raw JSONB)` with `UNIQUE(tx_id, msg_index)`, holding every message (D2).
+- Per-type tables reference `messages.message_id` (primary key and foreign key) instead of `UNIQUE(tx_id, comment)`. Keep `comment` only if it's still wanted for display.
 - Store every fee coin, in `transaction_fees(tx_id, denom, amount)` or as JSONB.
-- Add `message_addresses(message_table, message_id, address_id, role)` so "all activity for an address" is one indexed lookup.
-- Optionally store transaction results (`code`, `gas_used`, events) if `/block_results` is added.
+- Add `message_addresses(message_id, address_id, role)` so "all activity for an address" is one indexed lookup.
+- Store each transaction's outcome (`code`, `codespace`, `gas_wanted`, `gas_used`, `log`) as columns, and its events as JSONB; block-level events are not stored (D4).
 - Drop the redundant indexes.
 - Ship it as numbered migration files instead of editing `Txs.sql` in place.
 
 ### 5.5 GraphQL (Strawberry + FastAPI)
-- **Types:** `Block`, `Transaction`, a `Message` interface with one type per message table, and `Address`.
+- **Types:** `Block`, `Transaction`, `Message` and `Address`. `Message` is backed by the `messages` table, so every message, including unknown types, can be paged over. Typed fields (vote option, send amount, ...) come from the per-type table when one exists for that message's type (D2).
 - **Queries:**
   - `block(chainId, height)`, `blocks(range, first, after)`
   - `transaction(hash)`, `transactions(filter: {height range, messageType, address}, first, after)`
@@ -176,13 +190,28 @@ Replace the shell loop and the per-transaction scripts with one Python process:
 - Keep the current `unittest` suite running against the old scripts until each piece is replaced, then port the tests to the new modules.
 - Fixture-based tests for each handler, using saved decoded transactions with no network.
 - An end-to-end test: a file source with the test blocks → database → GraphQL query → expected JSON.
+- **Benchmarks and failure tests use the replay cache (D5)**, so throughput numbers measure the indexer rather than node latency, runs are reproducible, and a fault-injecting wrapper around the cache can produce timeouts, 429s, malformed responses and crashes on demand.
 
 ---
 
 ## 6. Open decisions
 
 1. **Line-5 fixer:** blocks from the REST source come straight from a node as JSON, so the file fixers have nothing to repair there. Keep them only for the file source, or drop them?
-2. **Backfill range:** start from the oldest height publicnode serves (about 2 months), from Polkachu's 15.6M with its gaps, or only follow the head?
-3. **Transaction results:** add `/block_results` (one more request per block) to store success/failure and events?
+2. ~~**Backfill range**~~: decided in D3 (25,000 blocks by default, configurable).
+3. ~~**Transaction results**~~: decided in D4 (outcome and transaction events).
 4. **Migaloo:** keep the 38 Migaloo blocks only as fixtures, or also support `migaloo-1` as a chain if a working node turns up?
 5. **Deployment:** run everything under Docker Compose (database, indexer, API), or only the database?
+
+---
+
+## 7. Decisions log
+
+Decisions agreed while reviewing this plan, newest last. Where a decision changes an earlier section, that section is updated too.
+
+| # | Question | Decision | Consequences |
+|---|---|---|---|
+| D1 | What is the revamped indexer for? | **Portfolio project.** It runs on a laptop or one small server, follows the Terra chain head plus a bounded backfill, and shows correctness, measured throughput and clean design. | No production monitoring or alerting, and no paid archive node. Docker Compose is enough for deployment. Effort goes into correctness, tests, measured throughput and a clear GraphQL API, not into operations. |
+| D2 | How should messages be stored? | **Hybrid.** Every message goes into one `messages` table (`message_id`, `tx_id`, `msg_index`, `type`, raw JSONB), and the existing per-type tables stay as typed copies of the types they cover. | Nothing is ever lost: an unknown type is still a `messages` row, just without a typed copy, so `new_type.txt` and the planned `unknown_messages` table are no longer needed. Per-type tables reference `messages.message_id` instead of `UNIQUE(tx_id, comment)`. `message_addresses` points at `messages.message_id`, so it needs no table-name column. GraphQL pages over one `Message` type and reads typed fields from the per-type table when one exists. Adding a type later only adds a typed copy, which can be back-filled from the stored JSON without re-fetching blocks. |
+| D3 | How much history to backfill? | **25,000 blocks by default, configurable** (revised from ~100,000 after the D4 measurements). Follow the chain head, and backfill the last 25,000 blocks, about 1.7 days at ~5.8 s per block. The start height is a command-line option. | From the measured sample: about 8,300 transactions, ~2.1 GiB downloaded in 50,000 requests, and ~150-300 MB in Postgres. Local storage is not the limit; load on free public nodes is. Enough for steady-state throughput runs and kill-and-resume tests. Larger ranges stay available as an optional benchmark. Backfill and head-following run side by side, so the indexer must handle a gap between where the backfill stops and where the head follower started. |
+| D4 | Store transaction results? | **Outcome and transaction events.** Fetch `/block_results` for every block and store each transaction's `code`, `codespace`, `gas_wanted`, `gas_used` and `log`, plus its events as JSONB. Block-level events are skipped. | Failed transactions are flagged instead of being indexed as if they succeeded (a failed `MsgSend` no longer looks like a transfer), and CosmWasm contract activity can be queried from the events. Costs a second request per block; both responses together are about 90 KiB per block. The two responses must be matched by height and transaction position. |
+| D5 | Save fetched blocks locally for replay? | **Record and replay.** The REST source can save each block's two raw responses, gzipped, and later runs can read from that cache instead of the network. | About 19 KiB per block on disk (roughly 470 MiB for 25,000 blocks). The 25,000 blocks are downloaded once, not on every run. Throughput numbers measure the indexer itself and are reproducible, and reliability tests inject failures through the cache. Network throughput is measured separately, on recording runs. The cache folder must be git-ignored. |
