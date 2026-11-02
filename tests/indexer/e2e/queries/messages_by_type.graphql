@@ -1,0 +1,8 @@
+{
+  messages(type: "/cosmos.gov.v1.MsgVote") {
+    index
+    type
+    details
+    transaction { hash height memo }
+  }
+}

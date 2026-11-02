@@ -1,10 +1,14 @@
 """The shared invariant checker (Rule 3): call it at the end of every integration test."""
 
 
+from indexer.handlers import get_registry
+
+
 def check_invariants(conn) -> None:
     """Assert the database is consistent. Grows with each ticket.
 
-    Now: every height is stored once, and no block is partly written.
+    Now: every height is stored once, no block is partly written, and every message of a handled type
+    has its typed row.
     """
     with conn.cursor() as cur:
         cur.execute("""
@@ -24,6 +28,15 @@ def check_invariants(conn) -> None:
             GROUP BY t.tx_id
             HAVING jsonb_array_length(t.tx_info -> 'body' -> 'messages') <> count(m.message_id)""")
         assert cur.fetchall() == [], "transactions whose message rows do not match their body (partial blocks)"
+
+        # every message of a handled type has its typed row
+        for type_url in get_registry().type_urls():
+            handler = get_registry().get(type_url)
+            cur.execute(f"""SELECT m.message_id FROM messages m
+                            WHERE m.type = %s AND NOT EXISTS
+                                  (SELECT 1 FROM {handler.table} t WHERE t.message_id = m.message_id)""",
+                        (type_url,))
+            assert cur.fetchall() == [], f"{type_url} messages without a typed row"
     conn.rollback()
 
 

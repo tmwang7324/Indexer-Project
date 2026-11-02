@@ -5,9 +5,13 @@ wrap it in a transaction it rolls back. Only `write_block` controls BEGIN/COMMIT
 Inserts use ON CONFLICT DO NOTHING, then look the existing row up when no row comes back.
 """
 import logging
+from typing import Optional
 
+from psycopg2 import sql
 from psycopg2.extras import Json
 
+from .handlers import Registry, get_registry
+from .handlers.spec import HandlerResult
 from .models import Block, Message, Transaction
 
 log = logging.getLogger(__name__)
@@ -61,21 +65,50 @@ def insert_message(cur, tx_id: int, msg: Message) -> int:
     )
 
 
-def write_block_rows(cur, block: Block) -> int:
+def _insert_row(cur, table: str, row: dict) -> None:
+    """INSERT ... ON CONFLICT DO NOTHING for a typed or side row. Table and column names come from
+    the handlers, never from message data; values are always parameters."""
+    columns = list(row)
+    values = [Json(v) if isinstance(v, (dict, list)) else v for v in row.values()]
+    cur.execute(
+        sql.SQL("INSERT INTO {} ({}) VALUES ({}) ON CONFLICT DO NOTHING").format(
+            sql.Identifier(table),
+            sql.SQL(", ").join(map(sql.Identifier, columns)),
+            sql.SQL(", ").join(sql.Placeholder() * len(columns)),
+        ),
+        values,
+    )
+
+
+def insert_typed(cur, message_id: int, result: HandlerResult) -> None:
+    """The typed copy of a message, plus its side rows."""
+    _insert_row(cur, result.table, {"message_id": message_id, **result.row})
+    for table, row in result.children:
+        _insert_row(cur, table, {"message_id": message_id, **row})
+
+
+def write_block_rows(cur, block: Block, registry: Optional[Registry] = None) -> int:
     """All the rows of one block, on an open transaction. Returns the block id."""
+    registry = registry or get_registry()
     block_id = insert_block(cur, block)
     for tx in block.transactions:
         tx_id = insert_transaction(cur, block_id, block, tx)
         for msg in tx.messages:
-            insert_message(cur, tx_id, msg)
+            message_id = insert_message(cur, tx_id, msg)
+            result = registry.handle(msg.type, msg.raw)
+            if result is None:
+                log.info("no handler for message type %s (block %s/%s): stored in messages only",
+                         msg.type, block.chain_id, block.height)
+            else:
+                insert_typed(cur, message_id, result)
     return block_id
 
 
-def write_block(conn, block: Block) -> int:
+def write_block(conn, block: Block, registry: Optional[Registry] = None) -> int:
     """Save a block completely or not at all."""
     try:
         with conn.cursor() as cur:
-            block_id = write_block_rows(cur, block)
+            block_id = write_block_rows(cur, block, registry)
         conn.commit()
         return block_id
     except BaseException:

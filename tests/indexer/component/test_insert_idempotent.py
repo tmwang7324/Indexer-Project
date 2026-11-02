@@ -1,16 +1,9 @@
 """C2: every insert is idempotent: twice -> one row, equal to the expected row, same id both times."""
-import json
-from pathlib import Path
-
 import pytest
 
 from indexer import writer
-from indexer.parse import parse_block
+from indexer_support.sample import BLOCK
 
-REPO = Path(__file__).resolve().parents[3]
-MIGALOO = json.loads((REPO / "test_blocks" / "7027410").read_text())
-DECODED = json.loads((REPO / "tests" / "fixtures" / "decoded" / "7027410.json").read_text())
-BLOCK = parse_block(MIGALOO["block_id"], MIGALOO["block"], [d["tx"] for d in DECODED])
 VOTE = BLOCK.transactions[2]
 
 
