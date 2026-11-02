@@ -52,7 +52,7 @@ def test_record_and_replay_through_a_fake_node_with_a_failing_endpoint(env, monk
         endpoints_env(monkeypatch, a, b)
         recorded = tmp_path / "recorded"
         assert run.main(["run", "--source", "rest", "--from-height", str(first), "--to-height", str(last),
-                         "--record", str(recorded)]) == 0
+                         "--prefetch", "1", "--record", str(recorded)]) == 0
 
     # 1. the blocks were indexed
     conn = connect(env)
@@ -91,12 +91,37 @@ def test_record_and_replay_through_a_fake_node_with_a_failing_endpoint(env, monk
         conn.close()
 
 
+def test_prefetch_keeps_the_rate_limit_and_gives_the_same_rows(env, monkeypatch, tmp_path):
+    """Several blocks in flight must not push a node above its rate limit, nor change what is stored."""
+    first, last = consecutive_run()
+    with FakeNode(SAMPLE, CHAIN) as a, FakeNode(SAMPLE, CHAIN) as b:
+        endpoints_env(monkeypatch, a, b)
+        assert run.main(["run", "--source", "rest", "--from-height", str(first), "--to-height", str(last),
+                         "--prefetch", "4", "--record", str(tmp_path / "rec")]) == 0
+    for node in (a, b):
+        assert max_in_window(node.arrivals) <= BURST + RATE, node.paths
+    assert len(a.arrivals) > 0 and len(b.arrivals) > 0              # the work was shared between the endpoints
+    conn = connect(env)
+    try:
+        from_nodes = snapshot(conn)
+        check_invariants(conn)
+    finally:
+        conn.close()
+    truncate_all(env)
+    assert run.main(["run", "--source", f"replay:{tmp_path / 'rec'}"]) == 0
+    conn = connect(env)
+    try:
+        assert snapshot(conn) == from_nodes
+    finally:
+        conn.close()
+
+
 def test_run_fails_when_every_endpoint_keeps_failing(env, monkeypatch, tmp_path, caplog):
     first, _ = consecutive_run()
     monkeypatch.setenv("INDEXER_ENDPOINT_COOLDOWN", "0.01")
     with FakeNode(SAMPLE, CHAIN, script=lambda n: 503) as only:
         endpoints_env(monkeypatch, only)
         assert run.main(["run", "--source", "rest", "--from-height", str(first), "--to-height", str(first),
-                         "--record", str(tmp_path / "rec")]) == 1
+                         "--prefetch", "1", "--record", str(tmp_path / "rec")]) == 1
     assert "could not fetch height" in caplog.text
     assert ReplayCache(tmp_path / "rec").heights(CHAIN) == []

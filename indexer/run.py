@@ -13,7 +13,7 @@ from .writer import write_block
 log = logging.getLogger("indexer")
 
 
-def build_source(spec: str, from_height=None, to_height=None, record=None):
+def build_source(spec: str, from_height=None, to_height=None, record=None, prefetch=1):
     kind, _, arg = spec.partition(":")
     if kind == "files" and arg:
         return FilesSource(arg)
@@ -22,12 +22,12 @@ def build_source(spec: str, from_height=None, to_height=None, record=None):
     if spec == "rest":
         if from_height is None:
             raise SystemExit("--source rest needs --from-height")
-        return RestSource(from_height, to_height, record=record)
+        return RestSource(from_height, to_height, record=record, prefetch=prefetch)
     raise SystemExit(f"unknown --source {spec!r} (expected files:<dir>, replay:<dir> or rest)")
 
 
 def cmd_run(args) -> int:
-    source = build_source(args.source, args.from_height, args.to_height, args.record)
+    source = build_source(args.source, args.from_height, args.to_height, args.record, args.prefetch)
     conn = connect()
     written = 0
     try:
@@ -57,6 +57,8 @@ def main(argv=None) -> int:
     run.add_argument("--to-height", type=int, default=None, help="last height for --source rest (default: the head)")
     run.add_argument("--record", default=None, metavar="DIR",
                      help="with --source rest: save every response into this replay cache")
+    run.add_argument("--prefetch", type=int, default=4, metavar="N",
+                     help="with --source rest: fetch up to N blocks at once, written in height order (default 4)")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.command == "run":
