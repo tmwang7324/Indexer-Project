@@ -259,7 +259,7 @@ The existing 27 tests (`tests/`) cover the old pipeline and stay as a fifth grou
 
 ### 8.2 Test cases
 
-24 test functions, about 100 cases once parametrized (see 8.6 for how the list was slimmed). Every database-backed test in the integration layer ends by calling one shared **invariant checker**:
+29 test functions, about 110 cases once parametrized: the 24 from the slimming in 8.6, plus I8 to I11 and E2, which surfaced when the plan was sliced into tickets (`docs/tickets/`). Every database-backed test in the integration layer ends by calling one shared **invariant checker**:
 
 > every height in the run is stored exactly once or is in `failed_blocks`, never both; no block is partly written; the checkpoint equals the highest contiguous stored height; every pooled connection is back in the pool; every worker thread has exited.
 
@@ -300,12 +300,17 @@ The existing 27 tests (`tests/`) cover the old pipeline and stay as a fifth grou
 | I5 | `test_commit_is_atomic_under_crash` | a crash injected through `before_commit` while another worker commits: that block is all there or not there at all |
 | I6 | `test_resume_after_crash` | crash between out-of-order blocks, restart: every block stored once, no gaps |
 | I7 | `test_stress` *(slow)* | seeded random delays and faults over the curated sample, a fixed number of rounds; seed printed on failure (D22) |
+| I8 | `test_fake_node_record_replay` | a local fake node with one endpoint returning 429: rotation, rate limit, recording; replaying the recording gives the same rows |
+| I9 | `test_catch_up_then_follow` | catch up from S to a scripted head, follow new blocks, restart while following (D16) |
+| I10 | `test_legacy_coexistence` | the old pipeline loads into `legacy` while the `indexer` schema stays unchanged (D9) |
+| I11 | `test_benchmark_command` | 5-block hermetic benchmark against fakes; a parity mismatch exits non-zero (D10) |
 
 **End-to-end** (separate indexer process, replay cache instead of the network)
 
 | ID | Test | Cases |
 |---|---|---|
-| E1 | `test_graphql` | one indexing run of the curated sample plus the Migaloo fixtures, then each query compared with its expected-JSON file: block range, transaction by hash, messages by type, activity for an address, cursor paging |
+| E1 | `test_graphql` | one indexing run of the curated sample plus the Migaloo fixtures, then each query compared with its expected-JSON file: block range, transaction by hash, messages by type, activity for an address, a failed transaction's outcome, cursor paging |
+| E2 | `test_compose_stack` | `docker compose up` on the replay sample, query the API through the published port, run the legacy loader (D13) |
 
 **Legacy:** the existing 27 tests, unchanged, marked `legacy` (D8, D18).
 
@@ -341,3 +346,5 @@ A first draft of these layers came to about **130 test functions**; the list in 
 6. **One end-to-end run, many assertions on its output.** E1 indexes once (shared fixture) and checks each query against its own expected file, instead of one slow indexing run per query.
 7. **Keep benchmarks and network calls out of the suite.** They make every run slow and flaky; D25 needs the suite hermetic.
 8. **Keep the suite slim:** `pytest --durations=10` shows the slowest tests, the coverage report (`--cov-report=term-missing`) shows untested lines, and a test that has never failed when the code around it was broken is a candidate for removal (mutation testing with `mutmut` finds those).
+
+The rules are kept, in a reusable form, in [`docs/TESTING_RULEBOOK.md`](docs/TESTING_RULEBOOK.md). The plan is broken into vertical-slice tickets in [`docs/tickets/`](docs/tickets/README.md).
