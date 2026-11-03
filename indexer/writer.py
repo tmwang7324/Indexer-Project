@@ -6,7 +6,7 @@ Inserts use ON CONFLICT DO NOTHING, then look the existing row up when no row co
 """
 import logging
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, NamedTuple, Optional
 
 import psycopg2
 from psycopg2 import sql
@@ -192,6 +192,11 @@ def _rollback(conn) -> None:
         pass
 
 
+class Written(NamedTuple):
+    block_id: int
+    checkpoint: Optional[int]      # the chain's checkpoint after this block (None when the checkpoint is off)
+
+
 @dataclass(frozen=True)
 class Hooks:
     """Test seams around the commit (D22). Production passes none.
@@ -203,7 +208,7 @@ class Hooks:
 
 
 def write_block(conn, block: Block, registry: Optional[Registry] = None, *,
-                base: Optional[int] = None, hooks: Optional[Hooks] = None) -> int:
+                base: Optional[int] = None, hooks: Optional[Hooks] = None) -> Written:
     """Save a block completely or not at all: rows, count checks, checkpoint, then COMMIT.
 
     `base` (the height just below the run's first block) switches the checkpoint on; without it the
@@ -214,8 +219,8 @@ def write_block(conn, block: Block, registry: Optional[Registry] = None, *,
             block_id = write_block_rows(cur, block, registry)
             check_block_counts(cur, block, block_id)
             clear_failure(cur, block.chain_id, block.height)
-            if base is not None:
-                advance_checkpoint(cur, block.chain_id, base)     # last: it holds a lock until the commit
+            checkpoint = advance_checkpoint(cur, block.chain_id, base) if base is not None else None
+            # (the checkpoint is last: it holds a lock until the commit)
         if hooks and hooks.before_commit:
             hooks.before_commit(block.height)
         conn.commit()
@@ -224,4 +229,4 @@ def write_block(conn, block: Block, registry: Optional[Registry] = None, *,
         raise
     if hooks and hooks.after_commit:
         hooks.after_commit(block.height)
-    return block_id
+    return Written(block_id, checkpoint)

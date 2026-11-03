@@ -17,9 +17,11 @@ from indexer.sources.replay import ReplayCache
 
 
 class FakeNode:
-    def __init__(self, cache_root, chain_id="phoenix-1", script=(), delay=0.0):
+    def __init__(self, cache_root, chain_id="phoenix-1", script=(), delay=0.0, lowest_txs=None, lowest_results=None):
         self.cache = ReplayCache(cache_root)
         self.chain_id = chain_id
+        self.lowest_txs, self.lowest_results = lowest_txs, lowest_results   # oldest heights each call still serves
+        self.head = None                  # set it to script the chain head; default: the highest cached block
         self.delay = delay                # seconds every answer takes (to keep a run busy)
         self.script = script if callable(script) else (lambda n, _s=list(script): _s[n] if n < len(_s) else None)
         self.arrivals: list = []          # monotonic time of every request
@@ -70,10 +72,14 @@ class FakeNode:
         url = urlparse(h.path)
         try:
             if url.path == "/cosmos/base/tendermint/v1beta1/blocks/latest":
-                top = max(self.cache.heights(self.chain_id))
+                top = self.head if self.head is not None else max(self.cache.heights(self.chain_id))
                 return self._send(h, 200, json.dumps({"block": {"header": {"height": str(top)}}}).encode())
             if url.path.startswith("/cosmos/tx/v1beta1/txs/block/"):
                 height = int(url.path.rsplit("/", 1)[1])
+                if self.lowest_txs is not None and height < self.lowest_txs:       # what a pruning node says
+                    return self._send(h, 500, json.dumps({"code": 2, "message": (
+                        f"rpc error: code = Unknown desc = height {height} is not available, "
+                        f"lowest height is {self.lowest_txs}")}).encode())
                 pages, _ = self.cache.read(self.chain_id, height)
                 key = parse_qs(url.query).get("pagination.key", [None])[0]
                 index = 0
@@ -82,6 +88,10 @@ class FakeNode:
                 return self._send(h, 200, pages[index])
             if url.path == "/block_results":
                 height = int(parse_qs(url.query)["height"][0])
+                if self.lowest_results is not None and height < self.lowest_results:
+                    return self._send(h, 200, json.dumps({"jsonrpc": "2.0", "id": -1, "error": {
+                        "code": -32603, "message": "Internal error",
+                        "data": f"height {height} is not available, lowest height is {self.lowest_results}"}}).encode())
                 return self._send(h, 200, self.cache.read(self.chain_id, height)[1])
         except Exception:      # unknown height, bad key: what a pruned node says
             return self._send(h, 404, b'{"error": "not found"}')

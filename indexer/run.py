@@ -23,14 +23,14 @@ log = logging.getLogger("indexer")
 EXIT_OK, EXIT_ERROR, EXIT_SIGNAL, EXIT_FAILED_BLOCKS = 0, 1, 2, 3
 
 
-def build_source(spec: str, from_height=None, to_height=None, record=None):
+def build_source(spec: str, from_height=None, to_height=None, record=None, follow=False):
     kind, _, arg = spec.partition(":")
     if kind == "files" and arg:
         return FilesSource(arg)
     if kind == "replay" and arg:
         return ReplaySource(arg, from_height=from_height)
     if spec == "rest":
-        return RestSource(from_height, to_height, record=record)
+        return RestSource(from_height, to_height, record=record, follow=follow)
     raise SystemExit(f"unknown --source {spec!r} (expected files:<dir>, replay:<dir> or rest)")
 
 
@@ -69,15 +69,13 @@ def execute(pipeline: Pipeline, source=None) -> int:
 
 
 def cmd_run(args) -> int:
-    source = build_source(args.source, args.from_height, args.to_height, args.record)
+    source = build_source(args.source, args.from_height, args.to_height, args.record, follow=not args.no_follow)
     if isinstance(source, RestSource):
-        conn = connect()
+        conn = connect()          # a start rule: the checkpoint + 1, else --from-height, else the head minus 25,000
         try:
             source.from_height = resolve_start(conn, source.chain_id, args.from_height)
         finally:
             conn.close()
-        if source.from_height is None:
-            raise SystemExit("--source rest needs --from-height when nothing has been indexed yet")
     pipeline = Pipeline(source, workers=args.workers,
                         max_attempts=int(os.environ.get("INDEXER_MAX_ATTEMPTS", "5")),
                         retry_delay=float(os.environ.get("INDEXER_RETRY_DELAY", "1")))
@@ -117,7 +115,9 @@ def main(argv=None) -> int:
     run = sub.add_parser("run", help="index blocks from a source")
     run.add_argument("--source", required=True, help="files:<dir>, replay:<dir> or rest")
     run.add_argument("--from-height", type=int, default=None, help="first height (replay: skip lower ones)")
-    run.add_argument("--to-height", type=int, default=None, help="last height for --source rest (default: the head)")
+    run.add_argument("--to-height", type=int, default=None, help="last height for --source rest (default: follow the head)")
+    run.add_argument("--no-follow", action="store_true",
+                     help="with --source rest: stop at the head found at start instead of following it")
     run.add_argument("--workers", type=int, default=1, help="worker threads (default 1)")
     run.add_argument("--record", default=None, metavar="DIR",
                      help="with --source rest: save every response into this replay cache")

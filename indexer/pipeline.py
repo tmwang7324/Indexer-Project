@@ -124,14 +124,14 @@ class Pipeline:
                                  sleep=self.stop.wait, on_retry=on_retry)
 
     def _attempt(self, item, base: int):
-        """One try at a block. Returns the Block, or None when it was already stored."""
+        """One try at a block. Returns (Block, checkpoint), or None when it was already stored."""
         with self._borrowed() as conn:
             if self._is_done(conn, item.chain_id, item.height):
                 return None
         block = item.load()                          # no database connection is held while fetching
         with self._borrowed() as conn:
-            write_block(conn, block, self.registry, base=base, hooks=self.hooks)
-        return block
+            written = write_block(conn, block, self.registry, base=base, hooks=self.hooks)
+        return block, written.checkpoint
 
     def _record_failure(self, item, error: str, attempts: int) -> None:
         def record():
@@ -144,7 +144,7 @@ class Pipeline:
 
     def _process(self, item, base: int) -> None:
         try:
-            block = self._retrying(lambda: self._attempt(item, base))
+            done = self._retrying(lambda: self._attempt(item, base))
         except Stopped:
             return                                   # told to stop while waiting to retry: leave the block for a restart
         except BadDataError as exc:
@@ -164,13 +164,19 @@ class Pipeline:
         except Exception:
             log.exception("unexpected error at block %s/%s: stopping the run", item.chain_id, item.height)
             raise
-        if block is None:
+        if done is None:
             self._count(skipped=1)
             return
+        block, checkpoint = done
         with self._stats_lock:
             self._giveups = 0
         self._count(stored=1)
-        log.info("indexed %s block %s (%d transactions)", block.chain_id, block.height, block.tx_num)
+        head = getattr(self.source, "head", None)
+        if head is not None and checkpoint is not None:          # following a node: say how far behind we are
+            log.info("indexed %s block %s (%d transactions); checkpoint %d, head %d, lag %d",
+                     block.chain_id, block.height, block.tx_num, checkpoint, head, max(0, head - checkpoint))
+        else:
+            log.info("indexed %s block %s (%d transactions)", block.chain_id, block.height, block.tx_num)
 
     def _count(self, **deltas) -> None:
         with self._stats_lock:
