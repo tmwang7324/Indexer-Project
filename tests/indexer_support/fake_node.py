@@ -17,9 +17,10 @@ from indexer.sources.replay import ReplayCache
 
 
 class FakeNode:
-    def __init__(self, cache_root, chain_id="phoenix-1", script=()):
+    def __init__(self, cache_root, chain_id="phoenix-1", script=(), delay=0.0):
         self.cache = ReplayCache(cache_root)
         self.chain_id = chain_id
+        self.delay = delay                # seconds every answer takes (to keep a run busy)
         self.script = script if callable(script) else (lambda n, _s=list(script): _s[n] if n < len(_s) else None)
         self.arrivals: list = []          # monotonic time of every request
         self.paths: list = []
@@ -60,6 +61,8 @@ class FakeNode:
             n = len(self.arrivals)
             self.arrivals.append(time.monotonic())
             self.paths.append(h.path)
+        if self.delay:
+            time.sleep(self.delay)
         scripted = self.script(n)
         if scripted is not None:      # a status, or (status, body)
             status, body = scripted if isinstance(scripted, tuple) else (scripted, b'{"error": "scripted"}')

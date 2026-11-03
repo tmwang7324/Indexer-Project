@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import Json, execute_values
 
@@ -179,8 +180,16 @@ def record_failure(conn, chain_id: str, height: int, error: str, attempts: int =
                 (chain_id, height, error, attempts))
         conn.commit()
     except BaseException:
-        conn.rollback()
+        _rollback(conn)
         raise
+
+
+def _rollback(conn) -> None:
+    """Roll back without hiding the error that made us: a dropped connection cannot roll back."""
+    try:
+        conn.rollback()
+    except psycopg2.Error:
+        pass
 
 
 @dataclass(frozen=True)
@@ -211,7 +220,7 @@ def write_block(conn, block: Block, registry: Optional[Registry] = None, *,
             hooks.before_commit(block.height)
         conn.commit()
     except BaseException:
-        conn.rollback()
+        _rollback(conn)
         raise
     if hooks and hooks.after_commit:
         hooks.after_commit(block.height)

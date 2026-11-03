@@ -35,6 +35,7 @@ def env(monkeypatch, clean_db):
     for key, value in clean_db.as_env().items():
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("INDEXER_ENDPOINT_COOLDOWN", str(COOLDOWN))
+    monkeypatch.setenv("INDEXER_RETRY_DELAY", "0.01")
     return clean_db
 
 
@@ -91,12 +92,21 @@ def test_record_and_replay_through_a_fake_node_with_a_failing_endpoint(env, monk
         conn.close()
 
 
-def test_run_fails_when_every_endpoint_keeps_failing(env, monkeypatch, tmp_path, caplog):
+def test_a_block_every_endpoint_fails_on_is_recorded_as_failed_and_nothing_is_cached(env, monkeypatch, tmp_path,
+                                                                                    caplog):
     first, _ = consecutive_run()
     monkeypatch.setenv("INDEXER_ENDPOINT_COOLDOWN", "0.01")
     with FakeNode(SAMPLE, CHAIN, script=lambda n: 503) as only:
         endpoints_env(monkeypatch, only)
         assert run.main(["run", "--source", "rest", "--from-height", str(first), "--to-height", str(first),
-                         "--record", str(tmp_path / "rec")]) == 1
+                         "--record", str(tmp_path / "rec")]) == run.EXIT_FAILED_BLOCKS
     assert "could not fetch height" in caplog.text
     assert ReplayCache(tmp_path / "rec").heights(CHAIN) == []
+    conn = connect(env)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT height, attempts, error FROM failed_blocks")
+            [(height, attempts, error)] = cur.fetchall()
+        assert (height, attempts) == (first, 5) and "could not fetch height" in error
+    finally:
+        conn.close()

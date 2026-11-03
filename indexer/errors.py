@@ -12,3 +12,8 @@ class CountMismatchError(BadDataError):
     def __init__(self, chain_id: str, height: int, mismatches: list):
         self.mismatches = mismatches
         super().__init__(f"block {chain_id}/{height}: " + "; ".join(str(m) for m in mismatches))
+
+
+class OutageError(Exception):
+    """Too many blocks in a row were given up on after transient errors: the node or the database is down,
+    and recording every remaining height as failed would only fill failed_blocks. The run stops."""

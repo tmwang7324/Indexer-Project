@@ -3,11 +3,13 @@ import argparse
 import logging
 import os
 import random
+import signal
 import sys
+import threading
 
 from .checkpoint import resolve_start
 from .db import connect
-from .errors import BadDataError, TransientError
+from .errors import BadDataError, OutageError, TransientError
 from .sources.files import FilesSource
 from .sources.replay import ReplaySource
 from .sources.rest import RestSource
@@ -16,8 +18,9 @@ from .verify import diff_block, pick_sample
 
 log = logging.getLogger("indexer")
 
-# Exit codes: 0 finished; 1 stopped by an error; 3 finished, but some blocks are in failed_blocks.
-EXIT_OK, EXIT_ERROR, EXIT_FAILED_BLOCKS = 0, 1, 3
+# Exit codes: 0 finished; 1 stopped by an unexpected error; 2 stopped by SIGTERM or SIGINT;
+# 3 finished, but some blocks are in failed_blocks.
+EXIT_OK, EXIT_ERROR, EXIT_SIGNAL, EXIT_FAILED_BLOCKS = 0, 1, 2, 3
 
 
 def build_source(spec: str, from_height=None, to_height=None, record=None):
@@ -31,28 +34,54 @@ def build_source(spec: str, from_height=None, to_height=None, record=None):
     raise SystemExit(f"unknown --source {spec!r} (expected files:<dir>, replay:<dir> or rest)")
 
 
+def execute(pipeline: Pipeline, source=None) -> int:
+    """Run a pipeline to its end and turn the outcome into an exit code. SIGTERM and SIGINT ask the workers to
+    stop after their current block (they cannot be killed), so the run ends in an orderly way."""
+    signalled = []
+
+    def on_signal(signum, frame):
+        signalled.append(signum)
+        log.warning("received signal %d: finishing the blocks in flight, then stopping", signum)
+        pipeline.stop.set()
+
+    previous = {}
+    if threading.current_thread() is threading.main_thread():
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            previous[signum] = signal.signal(signum, on_signal)
+    try:
+        stats = pipeline.run()
+    except (TransientError, BadDataError, OutageError) as exc:   # not tied to one height, or an outage
+        log.error("giving up: %s", exc)
+        return EXIT_ERROR
+    except Exception:                                      # a bug: the worker already logged the height
+        log.exception("the run stopped because of an unexpected error")
+        return EXIT_ERROR
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+    skipped = getattr(source, "skipped", [])
+    log.info("%s: %d blocks indexed, %d failed, %d already stored, %d retries, %d without decoded transactions",
+             "stopped" if signalled else "done", stats.stored, stats.failed, stats.skipped, stats.retries,
+             len(skipped))
+    if signalled:
+        return EXIT_SIGNAL
+    return EXIT_FAILED_BLOCKS if stats.failed else EXIT_OK
+
+
 def cmd_run(args) -> int:
     source = build_source(args.source, args.from_height, args.to_height, args.record)
-    try:
-        if isinstance(source, RestSource):
-            conn = connect()
-            try:
-                source.from_height = resolve_start(conn, source.chain_id, args.from_height)
-            finally:
-                conn.close()
-            if source.from_height is None:
-                raise SystemExit("--source rest needs --from-height when nothing has been indexed yet")
-        stats = Pipeline(source, workers=args.workers).run()
-    except TransientError as exc:
-        log.error("giving up: %s", exc)
-        return 1
-    except BadDataError as exc:          # not tied to a height (e.g. a file that is not a block)
-        log.error("bad data: %s", exc)
-        return 1
-    skipped = getattr(source, "skipped", [])
-    log.info("done: %d blocks indexed, %d failed, %d already stored, %d without decoded transactions",
-             stats.stored, stats.failed, stats.skipped, len(skipped))
-    return EXIT_FAILED_BLOCKS if stats.failed else EXIT_OK
+    if isinstance(source, RestSource):
+        conn = connect()
+        try:
+            source.from_height = resolve_start(conn, source.chain_id, args.from_height)
+        finally:
+            conn.close()
+        if source.from_height is None:
+            raise SystemExit("--source rest needs --from-height when nothing has been indexed yet")
+    pipeline = Pipeline(source, workers=args.workers,
+                        max_attempts=int(os.environ.get("INDEXER_MAX_ATTEMPTS", "5")),
+                        retry_delay=float(os.environ.get("INDEXER_RETRY_DELAY", "1")))
+    return execute(pipeline, source)
 
 
 def cmd_verify(args) -> int:

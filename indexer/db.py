@@ -13,7 +13,7 @@ STATEMENT_TIMEOUT_MS = 60000
 def _kwargs(s: DbSettings) -> dict:
     return dict(host=s.host, port=s.port, dbname=s.name, user=s.user, password=s.password,
                 options=f"-c search_path={SCHEMA} -c statement_timeout={STATEMENT_TIMEOUT_MS}",
-                application_name="indexer")
+                application_name="indexer", connect_timeout=10)
 
 
 def connect(settings: DbSettings | None = None):
@@ -30,6 +30,7 @@ class ConnectionPool:
         self._pool = ThreadedConnectionPool(1, size, **_kwargs(settings or DbSettings.from_env()))
         self._lock = threading.Lock()
         self._borrowed = 0
+        self.discarded = 0              # connections closed instead of pooled because they broke
 
     @property
     def in_use(self) -> int:
@@ -45,13 +46,20 @@ class ConnectionPool:
 
     def putconn(self, conn, broken: bool = False) -> None:
         """Return a connection. `broken` (or an already closed one) is closed instead of pooled."""
+        close = True
         try:
             if not broken and not conn.closed:
-                conn.rollback()           # never hand a half-finished transaction to the next block
-            self._pool.putconn(conn, close=broken or bool(conn.closed))
+                try:
+                    conn.rollback()       # never hand a half-finished transaction to the next block
+                except psycopg2.Error:
+                    broken = True
+            close = broken or bool(conn.closed)
+            self._pool.putconn(conn, close=close)
         finally:
             with self._lock:
                 self._borrowed -= 1
+                if close:
+                    self.discarded += 1
 
     def closeall(self) -> None:
         self._pool.closeall()

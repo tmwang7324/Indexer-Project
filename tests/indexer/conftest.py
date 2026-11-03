@@ -59,6 +59,7 @@ def indexer_env(clean_db, monkeypatch):
     """A clean test database, and the INDEXER_DB_* variables pointing `python -m indexer` at it."""
     for key, value in clean_db.as_env().items():
         monkeypatch.setenv(key, value)
+    monkeypatch.setenv("INDEXER_RETRY_DELAY", "0.01")          # a retry backoff of seconds would slow every test
     return clean_db
 
 
