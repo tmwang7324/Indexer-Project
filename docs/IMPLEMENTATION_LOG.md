@@ -66,11 +66,12 @@ Reverted the prefetch; recorded the single-threaded pipeline as the reference fo
 ### Problems faced
 - **My earlier throughput projection was too high.** I estimated about 300 blocks/s offline by combining separately timed stages; the end-to-end run measures about 210. Corrected in `docs/benchmarks/single-threaded-baseline.md`; the gap is not investigated.
 - **Two slips of mine, both caught before the push.** The revert's commit message contained a full commit hash I had written from memory and it was wrong (amended); a text replacement in ticket 16 swallowed the neighbouring "Empty block" bullet because the sentence ended at a line break (found by reading the diff, restored). Lesson applied: read the diff of every scripted edit.
+- **The tag could not be pushed.** The branch push worked, but five attempts to push the tag `benchmark/single-threaded-baseline` all ended with "the remote end hung up" while the proxy reported no denial; I take it that the cloud session's git access accepts only the designated branch, and did not try to route around it. Because the container is ephemeral, a local tag would be lost, so the docs name the commit `3d34de0` instead (it is on the pushed branch); the tag can be pushed from a normal clone.
 - **The first replay run was slower (132 blocks/s)** because the disk cache was cold, so the baseline reports three runs and says so.
 
 ### Key decisions
-- Revert with `git revert` (history kept, nothing rewritten on the pushed branch) and keep the old code reachable: tag `benchmark/single-threaded-baseline`, plus `tools/bench_single_threaded.py`.
-- The final benchmark (ticket 14) has three contenders: the old pipeline, this baseline and the multi-threaded pipeline. It runs the baseline from a worktree of the tag with a scratch database migrated by the tag's own migrations, so later schema changes cannot break it.
+- Revert with `git revert` (history kept, nothing rewritten on the pushed branch) and keep the old code reachable by commit hash (`3d34de0`), with `tools/bench_single_threaded.py`.
+- The final benchmark (ticket 14) has three contenders: the old pipeline, this baseline and the multi-threaded pipeline. It runs the baseline from a worktree of that commit with a scratch database migrated by that commit's own migrations, so later schema changes cannot break it.
 - Ticket 16 no longer refers to a prefetch; it requires the range planner to be thread-safe instead.
 
 ### Testing strategy and standards

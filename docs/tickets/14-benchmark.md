@@ -17,11 +17,11 @@
 
 ## The single-threaded baseline
 The new indexer as of tickets 01 to 05 fetches or reads one block, writes it, and only then moves to the next. It is kept as a reference so the final comparison shows what threads, the queue and (ticket 16) fewer requests bought.
-- **Where it lives:** git tag `benchmark/single-threaded-baseline`, with `tools/bench_single_threaded.py`, which prints one JSON line per run. The report is regenerated from that tag; the tag is never moved.
-- **How `bench` runs it:** it checks the tag out into a temporary `git worktree`, creates a scratch database, migrates it with the tag's own migrations (so later schema changes cannot break it), runs the tool there on the same blocks, and parses the JSON line.
+- **Where it lives:** commit `3d34de0` (`--baseline-ref`, default that hash), with `tools/bench_single_threaded.py`, which prints one JSON line per run. The report is regenerated from that commit, and history before it is never rewritten. (A tag `benchmark/single-threaded-baseline` was made on it, but the remote did not accept the tag push.)
+- **How `bench` runs it:** it checks that commit out into a temporary `git worktree`, creates a scratch database, migrates it with that commit's own migrations (so later schema changes cannot break it), runs the tool there on the same blocks, and parses the JSON line.
 - **Numbers already taken** (2026-11-03, local PostgreSQL 16, this container) are in `docs/benchmarks/single-threaded-baseline.md`: about 210 blocks/s offline (replay of 4,484 blocks) and 2.2 to 2.5 blocks/s live with the default rate limits. The final report repeats the runs on the day, because live figures depend on the network.
 - **What is compared:** offline, all three on the same replay cache; live, the baseline and the revamped pipeline on the same heights with the same endpoint limits. The old pipeline stays labelled as in the Spec below.
-- **In the hermetic test (I11)** the baseline is a stub script chosen with `--baseline-cmd`, so the test needs neither the tag nor git history.
+- **In the hermetic test (I11)** the baseline is a stub script chosen with `--baseline-cmd`, so the test needs neither that commit nor git history.
 
 ## Spec
 - **The real run:** about 1,000 consecutive Terra blocks; it uses the network and runs by hand, never in CI.

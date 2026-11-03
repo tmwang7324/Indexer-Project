@@ -2,12 +2,12 @@
 
 The new indexer as built by tickets 01 to 05: it fetches or reads **one block, writes it in its own database transaction, then moves to the next**. No threads, no queue, no prefetch, one request at a time. It is kept as a performance reference. At the end of the revamp the finished multi-threaded pipeline with queued prefetches is compared with it (ticket 14).
 
-- **Code:** git tag `benchmark/single-threaded-baseline`. Do not move the tag.
+- **Code:** commit `3d34de0`, on branch `claude/quirky-feynman-v7wozd`. Do not rewrite history before it. A tag `benchmark/single-threaded-baseline` was created on it, but the remote refused to take the tag push, so it exists only in the session that made it; to publish it from a normal clone run `git tag benchmark/single-threaded-baseline 3d34de0 && git push origin benchmark/single-threaded-baseline`.
 - **Tool:** `tools/bench_single_threaded.py`, which prints one JSON line per run (blocks, transactions, messages, seconds, rates, environment, git commit).
 - **Reproduce** (use a scratch database: `--reset` empties the indexer tables):
 
 ```bash
-git worktree add ../baseline benchmark/single-threaded-baseline
+git worktree add ../baseline 3d34de0
 cd ../baseline && pip install -r requirements-dev.txt
 INDEXER_DB_NAME=<scratch db> alembic upgrade head
 INDEXER_DB_NAME=<scratch db> python tools/bench_single_threaded.py --replay <replay cache> --reset

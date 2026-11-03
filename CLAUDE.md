@@ -10,7 +10,7 @@ After **every implementation wave** (a batch of work delivered together: one or 
 Use the template at the end of the log. Report faithfully: failures, wrong estimates and slips belong in the entry, not only the good news. The same entry goes in the same push as the work.
 
 ## The single-threaded baseline is frozen
-Git tag `benchmark/single-threaded-baseline` and `tools/bench_single_threaded.py` are the reference for the final performance comparison (`docs/benchmarks/single-threaded-baseline.md`, ticket 14). Never move or delete the tag.
+Commit `3d34de0` (with `tools/bench_single_threaded.py`) is the reference for the final performance comparison (`docs/benchmarks/single-threaded-baseline.md`, ticket 14). Never rewrite history before it. The tag `benchmark/single-threaded-baseline` could not be pushed from the cloud session, so refer to the commit hash.
 
 ## Working here
 - Plan and decisions: `REVAMP.md`; tickets: `docs/tickets/`; test rules: `docs/TESTING_RULEBOOK.md`.
