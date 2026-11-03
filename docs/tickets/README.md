@@ -12,7 +12,7 @@ The plan in `REVAMP.md`, broken into **vertical slices**. Each ticket delivers s
                    │                                ├─> 05 Record from live nodes ──> 16 Header ranges & batched results
                    │                                └─> 06 Verification ──> 07 Checkpoint & resume
                    │                                                           └─> 08 Thread pool ──> 09 Worker errors ──> 10 Catch up, then follow
-                   ├─> 12 Legacy coexistence ──> 14 Benchmark command
+                   ├─> 12 Legacy baseline ──> 14 Benchmark command
                    └─> 13 Compose for everything   (after 10 and 11)
 ```
 
@@ -29,7 +29,7 @@ The plan in `REVAMP.md`, broken into **vertical slices**. Each ticket delivers s
 | 09 | [Worker error handling and orderly shutdown](09-worker-errors.md) | Integration | 08 |
 | 10 | [Catch up, then follow the head](10-catch-up-then-follow.md) | Integration | 05, 09 |
 | 11 | [GraphQL paging, filters and batching](11-graphql-paging.md) | E2E | 03, 04 |
-| 12 | [Legacy pipeline coexistence](12-legacy-coexistence.md) | Integration | 01 |
+| 12 | [Legacy pipeline as a baseline](12-legacy-baseline.md) | Integration | 01 |
 | 13 | [Compose for everything](13-compose-everything.md) | E2E | 10, 11, 12 |
 | 14 | [Old-vs-new benchmark command](14-benchmark.md) | Integration | 04, 12 |
 | 15 | [Decode raw transaction bytes locally](15-decode-raw-bytes.md) | E2E | 01 |

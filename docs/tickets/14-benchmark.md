@@ -24,14 +24,16 @@ The new indexer as of tickets 01 to 05 fetches or reads one block, writes it, an
 - **In the hermetic test (I11)** the baseline is a stub script chosen with `--baseline-cmd`, so the test needs neither that commit nor git history.
 
 ## Spec
+- **Sequential, never concurrent:** the contenders run one after another, each into its own freshly created schema (or scratch database), with nothing else of ours running on the database or the machine. The command refuses to start if another session with `application_name=indexer` is active on the target server, so a running indexer cannot skew the numbers. The old pipeline is the baseline, not a second writer.
 - **The real run:** about 1,000 consecutive Terra blocks; it uses the network and runs by hand, never in CI.
 - **The report** states that the old pipeline's time includes 2 HTTP decode calls per transaction, and that the new indexer's figure comes from the replay cache, so the two are labelled rather than presented as like-for-like.
 
 ## Acceptance criteria
 - [ ] The 5-block hermetic run produces a report with throughput for the pipelines (the baseline through the stub) and a parity result.
 - [ ] A parity mismatch is reported per height and makes the command exit non-zero.
+- [ ] The contenders run strictly one at a time, and the command refuses to start while an indexer session is active.
 
 ## Tests in this ticket
 | ID | Layer | Cases |
 |---|---|---|
-| I11 | integration | 5-block hermetic benchmark with fakes and a stub baseline; parity mismatch exits non-zero |
+| I11 | integration | 5-block hermetic benchmark with fakes and a stub baseline; parity mismatch exits non-zero; refuses to start while an indexer session is active |
