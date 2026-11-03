@@ -185,7 +185,10 @@ def record_failure(conn, chain_id: str, height: int, error: str, attempts: int =
 
 @dataclass(frozen=True)
 class Hooks:
-    """Test seams around the commit (D22). Production passes none."""
+    """Test seams around the commit (D22). Production passes none.
+
+    `before_commit` runs while the block's transaction holds the checkpoint row's lock: it may raise (a crash),
+    but it must not wait for another block to commit, which would deadlock."""
     before_commit: Optional[Callable[[int], None]] = None      # called with the height, rows written, not committed
     after_commit: Optional[Callable[[int], None]] = None
 

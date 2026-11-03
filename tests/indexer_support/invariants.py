@@ -1,10 +1,13 @@
 """The shared invariant checker (Rule 3): call it at the end of every integration test."""
 
 
+import threading
+
 from indexer.handlers import get_registry
+from indexer.pipeline import THREAD_PREFIX
 
 
-def check_invariants(conn) -> None:
+def check_invariants(conn, pipeline=None) -> None:
     """Assert the database is consistent. Grows with each ticket.
 
     Now: every height is stored once or in failed_blocks, never both, no block is partly written, the checkpoint is the highest contiguous height, and every message of a handled type
@@ -48,6 +51,11 @@ def check_invariants(conn) -> None:
                         (type_url,))
             assert cur.fetchall() == [], f"{type_url} messages without a typed row"
     conn.rollback()
+    # a finished run leaves nothing behind: every connection is back, every worker thread has ended
+    alive = [t.name for t in threading.enumerate() if t.name.startswith(THREAD_PREFIX) and t.is_alive()]
+    assert alive == [], f"worker threads still running: {alive}"
+    if pipeline is not None and pipeline.pool is not None:
+        assert pipeline.pool.in_use == 0, f"{pipeline.pool.in_use} pooled connection(s) were never returned"
 
 
 def counts(conn):
@@ -91,3 +99,15 @@ def snapshot(conn) -> dict:
             JOIN address a USING (address_id)""")
     conn.rollback()
     return snap
+
+
+def diff_snapshots(a: dict, b: dict) -> str:
+    """The rows that differ between two snapshots, table by table, for a readable failure message."""
+    lines = []
+    for table in sorted(set(a) | set(b)):
+        only_a = [r for r in a.get(table, []) if r not in b.get(table, [])]
+        only_b = [r for r in b.get(table, []) if r not in a.get(table, [])]
+        if only_a or only_b:
+            lines.append(f"{table}: {len(only_a)} row(s) only in the first, {len(only_b)} only in the second")
+            lines += [f"  < {r}" for r in only_a[:5]] + [f"  > {r}" for r in only_b[:5]]
+    return "\n".join(lines)

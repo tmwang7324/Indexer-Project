@@ -7,12 +7,13 @@ import pytest
 from indexer import run
 from indexer.checkpoint import read_checkpoint
 from indexer.db import connect
-from indexer.pipeline import run_items
+from indexer.pipeline import Pipeline
 from indexer.sources.replay import ReplaySource
 from indexer.writer import Hooks
 from indexer_support.cache import renumbered_cache
 from indexer_support.db import db_test_settings, truncate_all
 from indexer_support.fake_node import FakeNode
+from indexer_support.gates import Gates
 from indexer_support.invariants import check_invariants, counts, snapshot
 
 START = 1000
@@ -33,6 +34,11 @@ def db(clean_db):
     conn.close()
 
 
+def go(cache, hooks=None, workers=1):
+    """Run the cache to its end against the test database."""
+    return Pipeline(ReplaySource(cache), workers=workers, settings=db_test_settings(), hooks=hooks).run()
+
+
 def crash_at(height):
     def hook(h):
         if h == height:
@@ -43,7 +49,7 @@ def crash_at(height):
 def test_crash_then_restart_stores_every_block_once(db, chain):
     cache, heights = chain
     with pytest.raises(SystemExit):
-        run_items(ReplaySource(cache).items(), db, hooks=crash_at(CRASH_AT))
+        go(cache, hooks=crash_at(CRASH_AT))
     assert counts(db)[0] == 25                             # 1000..1024 are committed; 1025 rolled back
     assert read_checkpoint(db, CHAIN) == CRASH_AT - 1
     check_invariants(db)
@@ -51,7 +57,7 @@ def test_crash_then_restart_stores_every_block_once(db, chain):
     db.close()                                             # the process is gone; a new one connects afresh
     db2 = connect(db_test_settings())
     try:
-        stats = run_items(ReplaySource(cache).items(), db2)
+        stats = go(cache)
         assert (stats.stored, stats.skipped, stats.failed) == (25, 25, 0)
         assert counts(db2)[0] == 50
         assert read_checkpoint(db2, CHAIN) == heights[-1] == START + 49
@@ -69,10 +75,10 @@ def test_the_restarted_run_gives_the_same_rows_as_an_uninterrupted_one(clean_db,
         try:
             if crash:
                 with pytest.raises(SystemExit):
-                    run_items(ReplaySource(cache).items(), conn, hooks=crash_at(crash))
+                    go(cache, hooks=crash_at(crash))
                 conn.close()
                 conn = connect(clean_db)
-            run_items(ReplaySource(cache).items(), conn)
+            go(cache)
             snaps.append(snapshot(conn))
         finally:
             conn.close()
@@ -81,9 +87,9 @@ def test_the_restarted_run_gives_the_same_rows_as_an_uninterrupted_one(clean_db,
 
 def test_restarting_a_finished_run_does_nothing(db, chain):
     cache, _ = chain
-    run_items(ReplaySource(cache).items(), db)
+    go(cache)
     before = snapshot(db)
-    stats = run_items(ReplaySource(cache).items(), db)
+    stats = go(cache)
     assert (stats.stored, stats.skipped, stats.failed) == (0, 50, 0)
     assert snapshot(db) == before
     check_invariants(db)
@@ -113,3 +119,43 @@ def test_a_rest_run_resumes_above_the_checkpoint_and_never_asks_for_lower_height
         check_invariants(conn)
     finally:
         conn.close()
+
+
+def test_crash_between_out_of_order_commits_then_restart_leaves_no_gap(clean_db, chain):
+    """I6, out-of-order case: 1003 is held while 1004 and 1005 commit; the process dies before 1006 commits
+    and 1003 never lands. The checkpoint must be 1002 (not 1005), and the restart must fill the gap."""
+    cache, heights = chain
+    truncate_all(clean_db)
+    uninterrupted = go(cache)
+    reference = connect(clean_db)
+    expected = snapshot(reference)
+    reference.close()
+    truncate_all(clean_db)
+
+    gates = Gates(hold=[1003], crash_at=1006, crash_after=[1004, 1005])
+    p = Pipeline(gates.wrap(ReplaySource(cache)), workers=4, settings=db_test_settings(), hooks=gates.hooks)
+    with pytest.raises(SystemExit):
+        p.run()
+    conn = connect(clean_db)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT height FROM blocks WHERE height IN (1003, 1004, 1005, 1006) ORDER BY height")
+            stored = [h for (h,) in cur.fetchall()]
+        conn.rollback()
+        assert stored[:2] == [1004, 1005] and 1003 not in stored and 1006 not in stored
+        assert read_checkpoint(conn, CHAIN) == 1002
+        check_invariants(conn, p)
+    finally:
+        conn.close()
+
+    restarted = Pipeline(ReplaySource(cache), workers=4, settings=db_test_settings())
+    stats = restarted.run()
+    assert stats.stored + stats.skipped == 50 and stats.failed == 0
+    conn = connect(clean_db)
+    try:
+        assert read_checkpoint(conn, CHAIN) == START + 49
+        assert snapshot(conn) == expected                 # every block once, same rows as an uninterrupted run
+        check_invariants(conn, restarted)
+    finally:
+        conn.close()
+    assert uninterrupted.stored == 50

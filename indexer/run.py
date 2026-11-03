@@ -11,7 +11,7 @@ from .errors import BadDataError, TransientError
 from .sources.files import FilesSource
 from .sources.replay import ReplaySource
 from .sources.rest import RestSource
-from .pipeline import run_items
+from .pipeline import Pipeline
 from .verify import diff_block, pick_sample
 
 log = logging.getLogger("indexer")
@@ -33,21 +33,22 @@ def build_source(spec: str, from_height=None, to_height=None, record=None):
 
 def cmd_run(args) -> int:
     source = build_source(args.source, args.from_height, args.to_height, args.record)
-    conn = connect()
     try:
         if isinstance(source, RestSource):
-            source.from_height = resolve_start(conn, source.chain_id, args.from_height)
+            conn = connect()
+            try:
+                source.from_height = resolve_start(conn, source.chain_id, args.from_height)
+            finally:
+                conn.close()
             if source.from_height is None:
                 raise SystemExit("--source rest needs --from-height when nothing has been indexed yet")
-        stats = run_items(source.items(), conn)
+        stats = Pipeline(source, workers=args.workers).run()
     except TransientError as exc:
         log.error("giving up: %s", exc)
         return 1
     except BadDataError as exc:          # not tied to a height (e.g. a file that is not a block)
         log.error("bad data: %s", exc)
         return 1
-    finally:
-        conn.close()
     skipped = getattr(source, "skipped", [])
     log.info("done: %d blocks indexed, %d failed, %d already stored, %d without decoded transactions",
              stats.stored, stats.failed, stats.skipped, len(skipped))
@@ -88,6 +89,7 @@ def main(argv=None) -> int:
     run.add_argument("--source", required=True, help="files:<dir>, replay:<dir> or rest")
     run.add_argument("--from-height", type=int, default=None, help="first height (replay: skip lower ones)")
     run.add_argument("--to-height", type=int, default=None, help="last height for --source rest (default: the head)")
+    run.add_argument("--workers", type=int, default=1, help="worker threads (default 1)")
     run.add_argument("--record", default=None, metavar="DIR",
                      help="with --source rest: save every response into this replay cache")
     verify = sub.add_parser("verify", help="compare a random sample of stored blocks with the source")

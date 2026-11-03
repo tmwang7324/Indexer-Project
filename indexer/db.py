@@ -1,20 +1,57 @@
 """PostgreSQL connections. Everything lives in the `indexer` schema (D9)."""
+import threading
+
 import psycopg2
+from psycopg2.pool import ThreadedConnectionPool
 
 from .config import SCHEMA, DbSettings
 
+# Statement timeout is generous but finite so a stuck query cannot hang a run (D21).
+STATEMENT_TIMEOUT_MS = 60000
+
+
+def _kwargs(s: DbSettings) -> dict:
+    return dict(host=s.host, port=s.port, dbname=s.name, user=s.user, password=s.password,
+                options=f"-c search_path={SCHEMA} -c statement_timeout={STATEMENT_TIMEOUT_MS}",
+                application_name="indexer")
+
 
 def connect(settings: DbSettings | None = None):
-    """Open a connection whose search_path is the indexer schema.
+    """Open a connection whose search_path is the indexer schema."""
+    return psycopg2.connect(**_kwargs(settings or DbSettings.from_env()))
 
-    Statement timeout is generous but finite so a stuck query cannot hang a run (D21).
-    """
-    s = settings or DbSettings.from_env()
-    return psycopg2.connect(
-        host=s.host,
-        port=s.port,
-        dbname=s.name,
-        user=s.user,
-        password=s.password,
-        options=f"-c search_path={SCHEMA} -c statement_timeout=60000",
-    )
+
+class ConnectionPool:
+    """A thread-safe pool sized to the number of workers (D7). Each block borrows one connection for its
+    transaction and returns it in a `finally`; a connection that broke is closed, never reused."""
+
+    def __init__(self, size: int, settings: DbSettings | None = None):
+        self.size = size
+        self._pool = ThreadedConnectionPool(1, size, **_kwargs(settings or DbSettings.from_env()))
+        self._lock = threading.Lock()
+        self._borrowed = 0
+
+    @property
+    def in_use(self) -> int:
+        """Connections borrowed and not yet returned (the invariant checker wants 0 after a run)."""
+        with self._lock:
+            return self._borrowed
+
+    def getconn(self):
+        conn = self._pool.getconn()
+        with self._lock:
+            self._borrowed += 1
+        return conn
+
+    def putconn(self, conn, broken: bool = False) -> None:
+        """Return a connection. `broken` (or an already closed one) is closed instead of pooled."""
+        try:
+            if not broken and not conn.closed:
+                conn.rollback()           # never hand a half-finished transaction to the next block
+            self._pool.putconn(conn, close=broken or bool(conn.closed))
+        finally:
+            with self._lock:
+                self._borrowed -= 1
+
+    def closeall(self) -> None:
+        self._pool.closeall()
