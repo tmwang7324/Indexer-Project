@@ -174,13 +174,32 @@ Create the schema with `alembic upgrade head` (migrations are hand-written SQL i
 ```
 python -m indexer run --source files:test_blocks                 # Migaloo block files that have a decoded fixture
 python -m indexer run --source replay:tests/indexer/data/terra   # Terra blocks from a replay cache
-python -m indexer run --source rest --from-height N [--to-height M] [--record DIR]   # live Terra nodes
+python -m indexer run --source rest [--from-height N] [--to-height M] [--no-follow] [--workers W] [--record DIR]
+python -m indexer verify --sample 50 --source replay:DIR [--seed S]   # compare stored blocks with the source
 python -m api                                                    # GraphQL at http://127.0.0.1:8000/graphql
 ```
+**Where a live run starts:** one above the checkpoint if there is one, otherwise `--from-height`, otherwise 25,000
+blocks below the head. **Where it ends:** with `--to-height` or `--no-follow` at that height or the head found at start;
+otherwise it catches up, then keeps polling the head and indexes each new block (stop it with SIGTERM or Ctrl-C).
+`--workers W` runs W threads that share a connection pool; blocks finish out of order, and the checkpoint
+(`checkpoints` table) is the highest height below which every block is stored. A restart skips what is stored.
+
 `--record DIR` saves the raw responses of every fetched block (gzipped) into a replay cache, so later runs
 (`--source replay:DIR`) need no network. Public endpoints and their rate limits are in
-`indexer/sources/endpoints.py`; override them with `INDEXER_ENDPOINTS` (a JSON list) and
-`INDEXER_ENDPOINT_COOLDOWN` (seconds a failing endpoint is skipped).
+`indexer/sources/endpoints.py`.
+
+**Errors:** transient errors (timeouts, 429/5xx, a dropped database connection) are retried with a doubling delay;
+a block that still fails, or has bad data (including a count mismatch between the source and what was written), is
+rolled back and recorded in `failed_blocks` while the run goes on. A bug stops the whole run. If 10 blocks in a row
+are given up on, the run stops as an outage.
+
+**Exit codes:** `0` finished; `1` stopped by an error or outage; `2` stopped by SIGTERM/SIGINT after the blocks in
+flight finished; `3` finished, but some blocks are in `failed_blocks`.
+
+**Environment:** `INDEXER_DB_*` (database), `INDEXER_ENDPOINTS` (JSON list of nodes with `rate`/`burst`),
+`INDEXER_ENDPOINT_COOLDOWN` (seconds a failing endpoint is skipped, default 30), `INDEXER_POLL_INTERVAL` (seconds
+between head lookups when following, default 6), `INDEXER_BACKFILL_DEPTH` (default 25000), `INDEXER_MAX_ATTEMPTS`
+(default 5) and `INDEXER_RETRY_DELAY` (seconds before the first retry, default 1).
 
 Example query:
 ```graphql

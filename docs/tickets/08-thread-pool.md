@@ -21,9 +21,9 @@
 - **Connections:** each block borrows a connection for its transaction and returns it in a `finally`.
 
 ## Acceptance criteria
-- [ ] 1 worker and 8 workers give identical rows on the curated sample.
-- [ ] With 103 held at its gate and 105 committed, the checkpoint stays at 102; releasing 103 (and 104) moves it to 105.
-- [ ] Crash between out-of-order commits, restart: no gaps, no duplicates.
+- [x] 1 worker and 8 workers give identical rows on the curated sample.
+- [x] With 103 held at its gate and 105 committed, the checkpoint stays at 102; releasing 103 (and 104) moves it to 105.
+- [x] Crash between out-of-order commits, restart: no gaps, no duplicates.
 
 ## Tests in this ticket
 | ID | Layer | Cases |

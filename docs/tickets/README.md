@@ -57,7 +57,7 @@ tests/indexer/      unit/ component/ integration/ e2e/ + conftest.py
 
 **CLI** (grows ticket by ticket)
 ```
-python -m indexer run --source files:<dir> | replay:<dir> | rest [--record <dir>] [--from-height N] [--workers N]
+python -m indexer run --source files:<dir> | replay:<dir> | rest [--record <dir>] [--from-height N] [--to-height M] [--no-follow] [--workers N]
 python -m indexer verify --sample N [--source ...]
 python -m indexer decode <block files>
 ```

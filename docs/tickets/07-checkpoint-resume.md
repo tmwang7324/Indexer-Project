@@ -20,8 +20,8 @@
 - **Restart:** re-reading a height that is already stored is harmless (idempotent inserts), but it is skipped for speed.
 
 ## Acceptance criteria
-- [ ] Kill at any height, restart: every block is stored once and the checkpoint is correct.
-- [ ] Restarting a finished run does nothing and exits 0.
+- [x] Kill at any height, restart: every block is stored once and the checkpoint is correct.
+- [x] Restarting a finished run does nothing and exits 0.
 
 ## Tests in this ticket
 | ID | Layer | Cases |

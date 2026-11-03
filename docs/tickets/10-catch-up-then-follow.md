@@ -20,9 +20,9 @@
 - **Retention edge case:** a height below the node's retention window (e.g. publicnode's ~2 months) returns an error. That's bad data from the node's side; it is recorded in `failed_blocks` with a clear message, not retried forever.
 
 ## Acceptance criteria
-- [ ] Starting with no checkpoint and no `--from-height` begins at head − 25,000 (checked against the fake node's head).
-- [ ] After catching up, each new head block is stored within a couple of polling intervals.
-- [ ] A restart while following resumes from the checkpoint without gaps.
+- [x] Starting with no checkpoint and no `--from-height` begins at head − 25,000 (checked against the fake node's head).
+- [x] After catching up, each new head block is stored within a couple of polling intervals.
+- [x] A restart while following resumes from the checkpoint without gaps.
 
 ## Tests in this ticket
 | ID | Layer | Cases |

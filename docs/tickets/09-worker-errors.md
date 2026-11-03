@@ -35,9 +35,9 @@
 - **Exit codes:** 0 done; 1 stopped by an unexpected error; 2 stopped by a signal. Choosing other values is fine, as long as they are documented.
 
 ## Acceptance criteria
-- [ ] All six I4 cases pass with the invariant checker.
-- [ ] A crash injected through `before_commit` while another worker commits: that block is entirely present or entirely absent.
-- [ ] The stress test passes for its fixed number of seeded rounds, and prints the seed on failure.
+- [x] All six I4 cases pass with the invariant checker.
+- [x] A crash injected through `before_commit` while another worker commits: that block is entirely present or entirely absent.
+- [x] The stress test passes for its fixed number of seeded rounds, and prints the seed on failure.
 
 ## Tests in this ticket
 | ID | Layer | Cases |

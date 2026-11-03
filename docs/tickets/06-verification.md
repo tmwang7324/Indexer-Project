@@ -24,8 +24,8 @@
   - exits non-zero if any difference is found.
 
 ## Acceptance criteria
-- [ ] A count mismatch leaves no rows for that block and records the reason.
-- [ ] `verify` reports a field changed by hand in the database, and exits 0 when nothing differs.
+- [x] A count mismatch leaves no rows for that block and records the reason.
+- [x] `verify` reports a field changed by hand in the database, and exits 0 when nothing differs.
 
 ## Tests in this ticket
 | ID | Layer | Cases |
