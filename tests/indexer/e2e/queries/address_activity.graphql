@@ -1,0 +1,15 @@
+{
+  address(value: "migaloo1fc4kjfau480nr503yl0r8ml7vvn07d2r7ztjky") {
+    value
+    type
+    messages {
+      role
+      message {
+        index
+        type
+        details
+        transaction { hash height }
+      }
+    }
+  }
+}

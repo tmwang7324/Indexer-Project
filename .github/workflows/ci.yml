@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: indexer
+          POSTGRES_PASSWORD: indexer
+          POSTGRES_DB: indexer_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U indexer -d indexer_test"
+          --health-interval 2s --health-timeout 3s --health-retries 15
+    env:
+      INDEXER_TEST_DB_HOST: 127.0.0.1
+      INDEXER_TEST_DB_PORT: "5433"
+      INDEXER_TEST_DB_NAME: indexer_test
+      INDEXER_TEST_DB_USER: indexer
+      INDEXER_TEST_DB_PASSWORD: indexer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install system tools used by the legacy shell tests
+        run: sudo apt-get update && sudo apt-get install -y jq postgresql-client
+      - name: Install Python dependencies
+        run: pip install -r requirements-dev.txt
+
+      # Unit, component and integration layers count towards coverage (D23).
+      - name: Unit, component and integration tests, with coverage
+        run: pytest -m "unit or component or integration" --cov --cov-report=term-missing --cov-fail-under=80
+      - name: Coverage floor for the critical modules (90% branch)
+        run: coverage report --include="indexer/writer.py,indexer/handlers/*,indexer/parse.py,indexer/addresses.py" --fail-under=90
+
+      # End-to-end tests run the indexer and API as separate processes, so they add no coverage.
+      - name: End-to-end tests
+        run: pytest -m e2e
+
+      # The legacy scripts create their tables unqualified, so in a database whose user is `indexer`
+      # they would land in the `indexer` schema. Give them their own database until ticket 12 moves
+      # them to a `legacy` schema (D9).
+      - name: Legacy pipeline tests
+        run: |
+          PGPASSWORD=indexer psql -h 127.0.0.1 -p 5433 -U indexer -d indexer_test -c "CREATE DATABASE legacy_test"
+          INDEXER_TEST_DB_NAME=legacy_test pytest -m legacy

@@ -1,0 +1,8 @@
+{
+  messages(type: "/cosmos.gov.v1.MsgVote", chainId: "migaloo-1") {
+    index
+    type
+    details
+    transaction { hash height memo }
+  }
+}

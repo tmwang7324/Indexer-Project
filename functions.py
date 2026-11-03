@@ -156,11 +156,11 @@ def Validate_json(content, file_name):
                                     "properties": {
                                         "block":{
                                             "type": "string",
-                                            "pattern": "^\d+$"
+                                            "pattern": r"^\d+$"
                                         },
                                         "app": {
                                             "type": "string",
-                                            "pattern": "^\d+$"
+                                            "pattern": r"^\d+$"
                                         },
                                     },
                                     "required": ["block","app"]
@@ -170,7 +170,7 @@ def Validate_json(content, file_name):
                                 },
                                 "height": {
                                     "type": "string",
-                                    "pattern": "^\d+$"
+                                    "pattern": r"^\d+$"
                                 },
                                 "time": {
                                     "type": "string",
@@ -289,7 +289,7 @@ def Validate_json(content, file_name):
                             "properties": {
                                 "height": {
                                     "type": "string",
-                                    "pattern": "^\d+$"
+                                    "pattern": r"^\d+$"
                                 },
                                 "round": {
                                     "type": "integer",
@@ -395,11 +395,11 @@ def Validate_json(content, file_name):
                                     "properties": {
                                         "block":{
                                             "type": "string",
-                                            "pattern": "^\d+$"
+                                            "pattern": r"^\d+$"
                                         },
                                         "app": {
                                             "type": "string",
-                                            "pattern": "^\d+$"
+                                            "pattern": r"^\d+$"
                                         },
                                     },
                                     "required": ["block","app"]
@@ -409,7 +409,7 @@ def Validate_json(content, file_name):
                                 },
                                 "height": {
                                     "type": "string",
-                                    "pattern": "^\d+$"
+                                    "pattern": r"^\d+$"
                                 },
                                 "time": {
                                     "type": "string",
@@ -528,7 +528,7 @@ def Validate_json(content, file_name):
                             "properties": {
                                 "height": {
                                     "type": "string",
-                                    "pattern": "^\d+$"
+                                    "pattern": r"^\d+$"
                                 },
                                 "round": {
                                     "type": "integer",
@@ -666,21 +666,25 @@ def decode_tx(tx, max_retries=10, retry_delay=2):
     Returns:
         Decoded transaction if successful, None otherwise.
     """
-    url_array = ["https://terra-rest.publicnode.com/", "https://api-terra-01.stakeflow.io", "https://terra-api.polkachu.com"]
+    url_array = ["https://terra-rest.publicnode.com", "https://api-terra-01.stakeflow.io", "https://terra-api.polkachu.com"]
     headers = {'Content-Type': 'application/json'}
     data = json.dumps({"tx_bytes": tx})
     retries = 0
 
     while retries < max_retries:
+        # Cycle through the endpoints so retries past the end of the list wrap
+        # around instead of raising IndexError, and join the path with exactly
+        # one '/' whether or not the base URL ends with one.
+        base_url = url_array[retries % len(url_array)].rstrip('/')
+        full_url = base_url + "/cosmos/tx/v1beta1/decode"
         try:
-            full_url = url_array[retries] + "cosmos/tx/v1beta1/decode"
             response = requests.post(full_url, headers=headers, data=data, timeout=5)  # Adding a 5-second timeout
             if response.status_code == 200:
                 print(f"Successfully decoded transaction")
                 return response.json()
             else:
                 print(f"Error: Unable to decode transaction, server returned status code {response.status_code} using {full_url}", file=sys.stderr)
-                if response.status_code in [400, 502, 503, 504]:  # Retry on certain status codes
+                if response.status_code in [400, 429, 500, 502, 503, 504]:  # Retry on certain status codes
                     time.sleep(retry_delay)
                     retries += 1
                 else:

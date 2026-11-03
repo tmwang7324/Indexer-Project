@@ -24,6 +24,7 @@ Version: 1.0                                                                    
 import os
 import sys
 import json
+import traceback
 from functions import check_file
 from functions import height_check
 from functions import Validate_json, checkLine
@@ -34,6 +35,9 @@ from functions import decode_tx
 
 file_path = os.getenv('FILE_PATH')
 file_name = os.getenv('FILE_NAME')
+
+# Line removed from a block that fails the schema check (see the block fixer below)
+MALFORMED_LINE = 5
 
 result = check_file(file_path, file_name)
 height = height_check(result, file_name)
@@ -50,25 +54,32 @@ if Validate_json(result, file_name) == 1:
     else:
         sys.exit(0)
 else:
-    foundError = checkLine(file_name, 1)
-    if(foundError >= 0):
-       try:
-            with open(file_name, 'r') as fr:
-                # reading line by line
-                lines = fr.readlines()
-                
-                # pointer for position
-                ptr = 1
-            
-                # opening in writing mode
-                with open(file_name, 'w') as fw:
-                    for line in lines:
-                    
-                        # we want to remove 5th line
-                        if ptr != foundError:
-                            fw.write(line)
-                        ptr += 1
-            print("Deleted", file=sys.stderr)
-       except:
-            print("Oops! something error")
+    # Block fixer: some malformed blocks had a bad 5th line, so remove line 5
+    # from the file and exit 8. The run stops; re-running picks up the fixed file.
+    #
+    # The previous version called checkLine(file_name, 1), which takes three
+    # arguments, so it raised a TypeError and exited 1 instead of 8. The shell
+    # only stops on 8, so it went on to load the schema-invalid block. It also
+    # opened file_name (relative to the working directory) instead of file_path.
+    foundError = MALFORMED_LINE
+    try:
+        with open(file_path, 'r') as fr:
+            # reading line by line
+            lines = fr.readlines()
+
+        if foundError <= len(lines) and lines[foundError - 1].strip() != '':
+            removed = lines[foundError - 1]
+            # opening in writing mode
+            with open(file_path, 'w') as fw:
+                for ptr, line in enumerate(lines, start=1):
+                    # we want to remove 5th line
+                    if ptr != foundError:
+                        fw.write(line)
+            # Log the exact text removed so the original block can be restored
+            print(f"Deleted line {foundError} of {file_name}: {removed.strip()}", file=sys.stderr)
+        else:
+            print(f"{file_name} has no non-blank line {foundError}; nothing deleted", file=sys.stderr)
+    except OSError:
+        print(f"Could not rewrite {file_path}", file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
     sys.exit(8)

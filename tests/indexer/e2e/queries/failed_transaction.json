@@ -1,0 +1,122 @@
+{
+  "transaction": {
+    "hash": "0C8142631647C6D126E55B35A35BBAF28CB1D407B2106532BB2FDABEFA70DC2E",
+    "chainId": "phoenix-1",
+    "height": 23563215,
+    "success": false,
+    "code": 5,
+    "codespace": "sdk",
+    "log": "failed to execute message; message index: 0: spendable balance 87101125uluna is smaller than 762380000uluna: insufficient funds",
+    "gasWanted": "781489",
+    "gasUsed": "128644",
+    "fee": [
+      {
+        "denom": "uluna",
+        "amount": "11723"
+      }
+    ],
+    "events": [
+      {
+        "type": "coin_spent",
+        "attributes": [
+          {
+            "key": "spender",
+            "index": true,
+            "value": "terra1c546c57l32dkva77kz0lum8pvelj8jzzu8kwu8"
+          },
+          {
+            "key": "amount",
+            "index": true,
+            "value": "11723uluna"
+          }
+        ]
+      },
+      {
+        "type": "coin_received",
+        "attributes": [
+          {
+            "key": "receiver",
+            "index": true,
+            "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+          },
+          {
+            "key": "amount",
+            "index": true,
+            "value": "11723uluna"
+          }
+        ]
+      },
+      {
+        "type": "transfer",
+        "attributes": [
+          {
+            "key": "recipient",
+            "index": true,
+            "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+          },
+          {
+            "key": "sender",
+            "index": true,
+            "value": "terra1c546c57l32dkva77kz0lum8pvelj8jzzu8kwu8"
+          },
+          {
+            "key": "amount",
+            "index": true,
+            "value": "11723uluna"
+          }
+        ]
+      },
+      {
+        "type": "message",
+        "attributes": [
+          {
+            "key": "sender",
+            "index": true,
+            "value": "terra1c546c57l32dkva77kz0lum8pvelj8jzzu8kwu8"
+          }
+        ]
+      },
+      {
+        "type": "tx",
+        "attributes": [
+          {
+            "key": "fee",
+            "index": true,
+            "value": "11723uluna"
+          },
+          {
+            "key": "fee_payer",
+            "index": true,
+            "value": "terra1c546c57l32dkva77kz0lum8pvelj8jzzu8kwu8"
+          }
+        ]
+      },
+      {
+        "type": "tx",
+        "attributes": [
+          {
+            "key": "acc_seq",
+            "index": true,
+            "value": "terra1c546c57l32dkva77kz0lum8pvelj8jzzu8kwu8/1049"
+          }
+        ]
+      },
+      {
+        "type": "tx",
+        "attributes": [
+          {
+            "key": "signature",
+            "index": true,
+            "value": "6Va6qChQYCVaaCiW8ytCJumARhp48M+bXPcT26qoJbtVc/rdlohyIF8hIjNnTELBgGZwuuOrsZdx5j1OAzFuMQ=="
+          }
+        ]
+      }
+    ],
+    "messages": [
+      {
+        "index": 0,
+        "type": "/cosmwasm.wasm.v1.MsgExecuteContract"
+      }
+    ]
+  }
+}

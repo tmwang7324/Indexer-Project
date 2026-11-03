@@ -1,0 +1,28 @@
+{
+  "transaction": {
+    "hash": "E77D14CB104E70372F151F73C5C233A351C6A014B64A67F9BCA9E5EB7B445C20",
+    "chainId": "migaloo-1",
+    "height": 7027410,
+    "memo": "LFG! --Voted by Polkachu",
+    "gasLimit": "100644",
+    "fee": [
+      {
+        "denom": "uwhale",
+        "amount": "150000"
+      }
+    ],
+    "messages": [
+      {
+        "index": 0,
+        "type": "/cosmos.gov.v1.MsgVote",
+        "raw": {
+          "@type": "/cosmos.gov.v1.MsgVote",
+          "voter": "migaloo1fc4kjfau480nr503yl0r8ml7vvn07d2r7ztjky",
+          "option": "VOTE_OPTION_YES",
+          "metadata": "",
+          "proposal_id": "39"
+        }
+      }
+    ]
+  }
+}
