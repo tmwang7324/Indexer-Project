@@ -38,6 +38,8 @@ file_name = os.getenv('FILE_NAME')
 
 # Line removed from a block that fails the schema check (see the block fixer below)
 MALFORMED_LINE = 5
+# The field on that line: its schema error path must be this for the fixer to act
+MALFORMED_FIELD = 'block_id.part_set_header.total'
 
 result = check_file(file_path, file_name)
 height = height_check(result, file_name)
@@ -62,6 +64,12 @@ else:
     # only stops on 8, so it went on to load the schema-invalid block. It also
     # opened file_name (relative to the working directory) instead of file_path.
     foundError = MALFORMED_LINE
+    # Only the known defect is repaired. A block that fails the schema for any other reason is reported and left
+    # exactly as it is, so repeated runs no longer eat a line each time (D11).
+    if Validate_json.last_error_path != MALFORMED_FIELD:
+        print(f"{file_name} fails the schema at {Validate_json.last_error_path!r}, not at {MALFORMED_FIELD!r}; "
+              f"the file is left unchanged", file=sys.stderr)
+        sys.exit(8)
     try:
         with open(file_path, 'r') as fr:
             # reading line by line

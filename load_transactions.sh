@@ -185,11 +185,20 @@ export ERR=$txt/error.log
 export txt
 
 # Set the values of psql login info
-DBNAME=$(jq -r '.psql.db_name' $info_path)
-DBUSER=$(jq -r '.psql.db_user' $info_path)
-DBPASSWORD=$(jq -r '.psql.db_password' $info_path)
-DBHOST=$(jq -r '.psql.db_host' $info_path)
-DBPORT=$(jq -r '.psql.db_port' $info_path)
+# INDEXER_DB_* environment variables win over info.json when present (D13).
+DBNAME=${INDEXER_DB_NAME:-$(jq -r '.psql.db_name' $info_path)}
+DBUSER=${INDEXER_DB_USER:-$(jq -r '.psql.db_user' $info_path)}
+DBPASSWORD=${INDEXER_DB_PASSWORD:-$(jq -r '.psql.db_password' $info_path)}
+DBHOST=${INDEXER_DB_HOST:-$(jq -r '.psql.db_host' $info_path)}
+DBPORT=${INDEXER_DB_PORT:-$(jq -r '.psql.db_port' $info_path)}
+# The schema to work in (D9): INDEXER_DB_SCHEMA, else "db_schema" in info.json, else the database default (public).
+# The old pipeline is a performance baseline: it runs on its own, never at the same time as the indexer.
+DBSCHEMA=${INDEXER_DB_SCHEMA-$(jq -r '.psql.db_schema // empty' $info_path)}
+if [[ -n $DBSCHEMA && ! $DBSCHEMA =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    die "Error---->db_schema '$DBSCHEMA' is not a plain schema name." 1
+fi
+# The Python scripts read the schema from here and apply it as their connection's search_path
+export INDEXER_DB_SCHEMA=$DBSCHEMA
 
 # echo "Database Name: $DBNAME"
 # echo "Database User: $DBUSER"
@@ -204,6 +213,16 @@ DBPORT=$(jq -r '.psql.db_port' $info_path)
 # Connect to psql
 
 # Use the host and port from info.json (previously hard-coded to localhost)
+if [[ -n $DBSCHEMA ]]; then
+    PGPASSWORD=$DBPASSWORD psql -d "$DBNAME" -U "$DBUSER" -h "$DBHOST" -p "$DBPORT" --quiet --set ON_ERROR_STOP=1 \
+        -c "CREATE SCHEMA IF NOT EXISTS $DBSCHEMA"
+    status=$?
+    if [[ $status -ne 0 ]]; then
+        die "Error---->Could not create schema $DBSCHEMA. (Exit code $status)" 9
+    fi
+    # Txs.sql creates unqualified tables; PGOPTIONS makes them land in the schema
+    export PGOPTIONS="-c search_path=$DBSCHEMA"
+fi
 PGPASSWORD=$DBPASSWORD psql -d "$DBNAME" -U "$DBUSER" -h "$DBHOST" -p "$DBPORT" -f Txs.sql --quiet --set ON_ERROR_STOP=1
 status=$?
 

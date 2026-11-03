@@ -125,12 +125,35 @@ def main(argv=None) -> int:
     verify.add_argument("--sample", type=int, required=True, help="how many stored blocks to check")
     verify.add_argument("--seed", type=int, default=None, help="random seed (printed, so a run can be repeated)")
     verify.add_argument("--source", default=None, help="replay:<dir> or rest (default: replay:$INDEXER_REPLAY_DIR)")
+    bench = sub.add_parser("bench", help="old pipeline vs single-threaded baseline vs revamped pipeline")
+    bench.add_argument("--heights", required=True, metavar="A:B", help="first and last height, e.g. 23263983:23264982")
+    bench.add_argument("--prepare", action="store_true",
+                       help="fetch the inputs (replay cache and old-format files) instead of running")
+    bench.add_argument("--from-cache", default=None, metavar="DIR",
+                       help="with --prepare: take the blocks from this replay cache instead of the nodes")
+    bench.add_argument("--dir", default="bench", help="folder for the prepared inputs and reports (default bench)")
+    bench.add_argument("--report-dir", default=None, help="where to write the report (default: --dir)")
+    bench.add_argument("--only", default=None, help="comma list of contenders to run: old,baseline,new")
+    bench.add_argument("--workers", type=int, default=8, help="workers of the revamped pipeline (default 8)")
+    bench.add_argument("--decode", choices=["local", "live"], default="live",
+                       help="old pipeline: decode transactions with the public nodes (live) or a local fake (local)")
+    bench.add_argument("--live", action="store_true", help="baseline and revamped pipeline fetch from the nodes")
+    bench.add_argument("--baseline-ref", default="3d34de0", help="commit of the single-threaded baseline")
+    bench.add_argument("--baseline-cmd", default=None, help="replace the baseline tool's command line")
+    bench.add_argument("--keep-db", action="store_true", help="keep the scratch databases")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.command == "run":
         return cmd_run(args)
     if args.command == "verify":
         return cmd_verify(args)
+    if args.command == "bench":
+        from .bench import EXIT_CANNOT_RUN, BenchError, run_bench
+        try:
+            return run_bench(args)
+        except BenchError as exc:
+            print(f"bench: {exc}", file=sys.stderr)
+            return EXIT_CANNOT_RUN
     return 2
 
 

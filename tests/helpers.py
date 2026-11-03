@@ -121,7 +121,8 @@ def run_script_in_process(script, workdir, env, decoded_by_tx=None):
     old_cwd = os.getcwd()
     os.chdir(workdir)
     try:
-        with mock.patch.dict(os.environ, env), \
+        with mock.patch.dict(os.environ, {k: v for k, v in os.environ.items() if not k.startswith("INDEXER_DB_")}, clear=True), \
+                mock.patch.dict(os.environ, env), \
                 mock.patch("functions.decode_tx", fake_decode), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
@@ -139,7 +140,9 @@ def run_script_in_process(script, workdir, env, decoded_by_tx=None):
 
 def run_script_subprocess(script, workdir, env):
     """Run a script as a separate process. Returns CompletedProcess."""
-    full_env = dict(os.environ, **env)
+    # INDEXER_DB_* variables win over info.json (D13); these tests must use the info.json they wrote
+    full_env = {k: v for k, v in os.environ.items() if not k.startswith("INDEXER_DB_")}
+    full_env.update(env)
     return subprocess.run(
         [sys.executable, str(REPO / script)], cwd=workdir, env=full_env,
         capture_output=True, text=True, timeout=120,

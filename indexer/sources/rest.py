@@ -140,6 +140,18 @@ class RestSource:
                                f"(below the retention window): {last}")
         raise TransientError(f"could not fetch height {height} from any endpoint (last: {last})")
 
+    def fetch_old_format(self, height: int) -> bytes:
+        """The block in the old pipeline's file format (`block_id`, `block` and `sdk_block`), for the benchmark."""
+        last = "no endpoint tried"
+        for endpoint in self._attempts():
+            try:
+                return self._get(endpoint, endpoint.rest, f"/cosmos/base/tendermint/v1beta1/blocks/{height}")
+            except _EndpointFailure as exc:
+                last = str(exc)
+                if not exc.pruned:
+                    self.pool.mark_failed(endpoint)
+        raise TransientError(f"could not fetch the old-format block {height} from any endpoint (last: {last})")
+
     def latest_height(self) -> int:
         last = "no endpoint tried"
         for endpoint in self._attempts():

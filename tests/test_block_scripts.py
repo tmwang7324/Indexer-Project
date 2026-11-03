@@ -16,6 +16,9 @@ from pathlib import Path
 import helpers
 from helpers import BLOCK_FILE, BLOCK_HEIGHT
 
+TERRA_HEIGHT = "23263983"
+TERRA_BLOCK = helpers.FIXTURES / "terra_blocks" / TERRA_HEIGHT
+
 # Connection details that fail immediately: these tests must not need a database
 NO_DB = {"db_name": "none", "db_user": "none", "db_password": "", "db_host": "127.0.0.1", "db_port": "1"}
 
@@ -72,6 +75,49 @@ class CheckOneFileTest(BlockScriptTest):
         result = self.run_check(self.write_block(lines))
         self.assertEqual(result.returncode, 8, result.stderr)
         self.assertEqual(decoy.read_text(), "line1\nline2\nline3\nline4\nline5\nline6\n")
+
+
+    # --- ticket 12: Terra blocks, and a fixer that only repairs the one known defect ------------------------
+    def test_terra_block_passes_and_is_untouched(self):
+        # A real phoenix-1 block in the old file format. Its sdk_block proposer_address is a 51-character
+        # terravalcons address; the validator used to demand migaloo's 53 characters.
+        original = TERRA_BLOCK.read_text()
+        path = self.blocks / TERRA_HEIGHT
+        path.write_text(original)
+        result = helpers.run_script_subprocess(
+            "check_one_file.py", self.workdir, {"FILE_PATH": str(path), "FILE_NAME": path.name})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(path.read_text(), original)
+
+    def test_terra_block_with_malformed_total_loses_only_line_5(self):
+        lines = TERRA_BLOCK.read_text().splitlines(keepends=True)
+        self.assertEqual(lines[4].strip(), '"total": 1,')
+        lines[4] = lines[4].replace('"total": 1,', '"total": "1",')
+        path = self.blocks / TERRA_HEIGHT
+        path.write_text("".join(lines))
+        result = helpers.run_script_subprocess(
+            "check_one_file.py", self.workdir, {"FILE_PATH": str(path), "FILE_NAME": path.name})
+        self.assertEqual(result.returncode, 8, result.stderr)
+        self.assertEqual(path.read_text(), "".join(lines[:4] + lines[5:]))
+
+    def test_unrelated_schema_failure_exits_8_and_leaves_the_file_unchanged(self):
+        block = json.loads(BLOCK_FILE.read_text())
+        block["block_id"]["hash"] = "too short"             # fails the schema, but not at line 5's field
+        text = json.dumps(block, indent=2)
+        path = self.write_block([text])
+        for _ in range(2):                                    # and running it again does not eat a line either
+            result = self.run_check(path)
+            self.assertEqual(result.returncode, 8, result.stderr)
+            self.assertEqual(path.read_text(), text)
+        self.assertIn("left unchanged", result.stderr)
+
+    def test_wrong_proposer_address_format_is_still_rejected(self):
+        block = json.loads(BLOCK_FILE.read_text())
+        block["sdk_block"]["header"]["proposer_address"] = "not-a-consensus-address"
+        text = json.dumps(block, indent=2)
+        path = self.write_block([text])
+        self.assertEqual(self.run_check(path).returncode, 8)
+        self.assertEqual(path.read_text(), text)
 
 
 class LoadingFilesTest(BlockScriptTest):

@@ -38,6 +38,7 @@ import sys
 import requests
 import time
 import psycopg2
+import re
 from psycopg2 import OperationalError
 import hashlib
 import base64
@@ -114,6 +115,7 @@ def height_check(content,file_name):
 
 
 def Validate_json(content, file_name):
+    Validate_json.last_error_path = None
     schema = {
             "type": "object",
             "properties":{
@@ -491,10 +493,10 @@ def Validate_json(content, file_name):
                                         "maxLength": 44
                                 },
                                 "proposer_address": {
+                                        # A bech32 consensus address of any chain: <prefix>valcons1 + 38 characters
+                                        # (53 characters for migaloo, 51 for terra)
                                         "type": "string",
-                                        "pattern": "^[A-Za-z0-9+/=]+$",
-                                        "minLength": 53,
-                                        "maxLength": 53
+                                        "pattern": "^[a-z0-9]+valcons1[02-9ac-hj-np-z]{38}$"
                                 },
                             },
                             "required": ["version","chain_id","height", "time","last_block_id","last_commit_hash","data_hash","validators_hash","next_validators_hash","consensus_hash","app_hash","last_results_hash","evidence_hash","proposer_address"]
@@ -633,6 +635,8 @@ def Validate_json(content, file_name):
         print(f"JSON data of {file_name} is invalid.", file=sys.stderr)
         print(ve, file=sys.stderr)
         print(traceback.format_exc())
+        # The path of the failing field, for check_one_file.py's block fixer (D11)
+        Validate_json.last_error_path = ".".join(str(p) for p in ve.absolute_path)
 
 def new_type(message, file_path, height, transaction_num, message_num):
 
@@ -666,7 +670,9 @@ def decode_tx(tx, max_retries=10, retry_delay=2):
     Returns:
         Decoded transaction if successful, None otherwise.
     """
-    url_array = ["https://terra-rest.publicnode.com", "https://api-terra-01.stakeflow.io", "https://terra-api.polkachu.com"]
+    # LEGACY_DECODE_URLS (comma-separated base URLs) replaces the list, e.g. to point the benchmark at a local fake
+    url_array = [u.strip() for u in os.environ.get("LEGACY_DECODE_URLS", "").split(",") if u.strip()] or [
+        "https://terra-rest.publicnode.com", "https://api-terra-01.stakeflow.io", "https://terra-api.polkachu.com"]
     headers = {'Content-Type': 'application/json'}
     data = json.dumps({"tx_bytes": tx})
     retries = 0
@@ -697,7 +703,30 @@ def decode_tx(tx, max_retries=10, retry_delay=2):
     return None
 
 
+def db_schema():
+    """The schema the old pipeline works in: INDEXER_DB_SCHEMA, else "db_schema" under "psql" in info.json,
+    else None (the database's default search path, i.e. the public schema, exactly as before)."""
+    schema = os.environ.get("INDEXER_DB_SCHEMA")
+    if schema is None:
+        try:
+            with open("info.json", "r") as f:
+                schema = json.load(f).get("psql", {}).get("db_schema")
+        except (OSError, ValueError):
+            schema = None
+    if schema and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema):
+        raise ValueError(f"db_schema {schema!r} is not a plain schema name")
+    return schema or None
+
+
 def create_connection(db_name, db_user, db_password, db_host, db_port):
+    """Connect with the values from info.json; INDEXER_DB_* environment variables win when present (D13)."""
+    env = os.environ
+    db_name = env.get("INDEXER_DB_NAME", db_name)
+    db_user = env.get("INDEXER_DB_USER", db_user)
+    db_password = env.get("INDEXER_DB_PASSWORD", db_password)
+    db_host = env.get("INDEXER_DB_HOST", db_host)
+    db_port = env.get("INDEXER_DB_PORT", db_port)
+    schema = db_schema()
     connection = None
     try:
         connection = psycopg2.connect(
@@ -706,6 +735,8 @@ def create_connection(db_name, db_user, db_password, db_host, db_port):
             password=db_password,
             host=db_host,
             port=db_port,
+            # The schema becomes the connection's search_path, so every unqualified table name lands in it
+            options=f"-c search_path={schema}" if schema else None,
         )
         #print("Connection to PostgreSQL DB successful")#
     except OperationalError as e:
