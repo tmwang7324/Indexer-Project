@@ -10,11 +10,12 @@ import gzip
 import json
 import logging
 import os
+from functools import partial
 from pathlib import Path
 from typing import Iterator, Optional
 
 from ..errors import BadDataError
-from ..models import Block
+from ..models import Block, WorkItem
 from ..parse import parse_txs_block
 
 log = logging.getLogger(__name__)
@@ -22,6 +23,13 @@ log = logging.getLogger(__name__)
 
 def _gz(data: bytes) -> bytes:
     return gzip.compress(data, compresslevel=9, mtime=0)   # mtime=0: the same bytes give the same file
+
+
+def _gunzip(path: Path) -> bytes:
+    try:
+        return gzip.decompress(path.read_bytes())
+    except (OSError, EOFError) as exc:       # a corrupt or truncated file
+        raise BadDataError(f"replay cache file {path} cannot be read: {exc}") from exc
 
 
 class ReplayCache:
@@ -56,14 +64,14 @@ class ReplayCache:
             path = self._path(chain_id, height, "txs" if n == 0 else f"txs.{n}")
             if not path.exists():
                 break
-            pages.append(gzip.decompress(path.read_bytes()))
+            pages.append(_gunzip(path))
             n += 1
         if not pages:
             raise BadDataError(f"replay cache has no txs response for {chain_id}/{height}")
         results_path = self._path(chain_id, height, "results")
         if not results_path.exists():
             raise BadDataError(f"replay cache has no block_results for {chain_id}/{height}")
-        return pages, gzip.decompress(results_path.read_bytes())
+        return pages, _gunzip(results_path)
 
     def heights(self, chain_id: str) -> list:
         folder = self.root / chain_id
@@ -76,20 +84,32 @@ class ReplayCache:
 
     def block(self, chain_id: str, height: int) -> Block:
         pages, results = self.read(chain_id, height)
-        return parse_txs_block([json.loads(p) for p in pages], json.loads(results))
+        try:
+            return parse_txs_block([json.loads(p) for p in pages], json.loads(results))
+        except ValueError as exc:
+            raise BadDataError(f"replay cache entry {chain_id}/{height} is not valid JSON: {exc}") from exc
 
 
 class ReplaySource:
     """Yields every cached block, chain by chain, in ascending height."""
 
-    def __init__(self, folder, from_height: Optional[int] = None):
+    def __init__(self, folder, from_height: Optional[int] = None, to_height: Optional[int] = None):
         self.cache = ReplayCache(folder)
-        self.from_height = from_height
+        self.from_height, self.to_height = from_height, to_height
         self.skipped: list = []
 
-    def blocks(self) -> Iterator[Block]:
+    def items(self, stop=None) -> Iterator[WorkItem]:
         for chain_id in self.cache.chains():
             for height in self.cache.heights(chain_id):
                 if self.from_height is not None and height < self.from_height:
                     continue
-                yield self.cache.block(chain_id, height)
+                if self.to_height is not None and height > self.to_height:
+                    continue
+                yield WorkItem(chain_id, height, partial(self.cache.block, chain_id, height))
+
+    def fetch(self, chain_id: str, height: int) -> Block:
+        return self.cache.block(chain_id, height)
+
+    def blocks(self) -> Iterator[Block]:
+        for item in self.items():
+            yield item.load()

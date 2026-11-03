@@ -54,5 +54,13 @@ def clean_db(migrated_db):
     dbtools.truncate_all(migrated_db)
 
 
+@pytest.fixture
+def indexer_env(clean_db, monkeypatch):
+    """A clean test database, and the INDEXER_DB_* variables pointing `python -m indexer` at it."""
+    for key, value in clean_db.as_env().items():
+        monkeypatch.setenv(key, value)
+    return clean_db
+
+
 def load_json(path):
     return json.loads(Path(path).read_text())

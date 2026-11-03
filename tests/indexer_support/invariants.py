@@ -7,7 +7,7 @@ from indexer.handlers import get_registry
 def check_invariants(conn) -> None:
     """Assert the database is consistent. Grows with each ticket.
 
-    Now: every height is stored once, no block is partly written, and every message of a handled type
+    Now: every height is stored once or in failed_blocks, never both, no block is partly written, and every message of a handled type
     has its typed row.
     """
     with conn.cursor() as cur:
@@ -28,6 +28,11 @@ def check_invariants(conn) -> None:
             GROUP BY t.tx_id
             HAVING jsonb_array_length(t.tx_info -> 'body' -> 'messages') <> count(m.message_id)""")
         assert cur.fetchall() == [], "transactions whose message rows do not match their body (partial blocks)"
+
+        cur.execute("""
+            SELECT f.chain_id, f.height FROM failed_blocks f
+            JOIN blocks b ON b.chain_id = f.chain_id AND b.height = f.height""")
+        assert cur.fetchall() == [], "a height is both stored and in failed_blocks"
 
         # every message of a handled type has its typed row
         for type_url in get_registry().type_urls():

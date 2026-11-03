@@ -9,11 +9,12 @@ A block with no decoded file is reported and skipped until local decoding exists
 import json
 import logging
 import os
+from functools import partial
 from pathlib import Path
 from typing import Iterator, Optional
 
 from ..errors import BadDataError
-from ..models import Block
+from ..models import Block, WorkItem
 from ..parse import parse_block
 
 log = logging.getLogger(__name__)
@@ -35,11 +36,12 @@ class FilesSource:
                 return candidate
         return None
 
-    def blocks(self) -> Iterator[Block]:
+    def items(self, stop=None) -> Iterator[WorkItem]:
         for path in sorted(p for p in self.folder.iterdir() if p.is_file() and not p.name.endswith(".decoded.json")):
             try:
                 content = json.loads(path.read_text())
                 height = content["block"]["header"]["height"]
+                chain_id = content["block"]["header"]["chain_id"]
             except (ValueError, KeyError, TypeError) as exc:
                 raise BadDataError(f"{path} is not a block file: {exc!r}") from exc
             txs = content["block"]["data"].get("txs") or []
@@ -48,5 +50,13 @@ class FilesSource:
                 log.warning("skipping %s: raw transaction bytes and no decoded file", path.name)
                 self.skipped.append(path.name)
                 continue
-            decoded = json.loads(decoded_path.read_text()) if decoded_path else []
-            yield parse_block(content["block_id"], content["block"], [d["tx"] for d in decoded])
+            yield WorkItem(chain_id, int(height), partial(self._load, content, decoded_path))
+
+    @staticmethod
+    def _load(content: dict, decoded_path: Optional[Path]) -> Block:
+        decoded = json.loads(decoded_path.read_text()) if decoded_path else []
+        return parse_block(content["block_id"], content["block"], [d["tx"] for d in decoded])
+
+    def blocks(self) -> Iterator[Block]:
+        for item in self.items():
+            yield item.load()

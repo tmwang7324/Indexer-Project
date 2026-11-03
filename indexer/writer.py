@@ -11,9 +11,11 @@ from psycopg2 import sql
 from psycopg2.extras import Json, execute_values
 
 from .addresses import classify_address
+from .errors import CountMismatchError
 from .handlers import Registry, get_registry
 from .handlers.spec import HandlerResult
 from .models import Block, Message, Transaction
+from .verify import check_counts, source_summary, written_summary
 
 log = logging.getLogger(__name__)
 
@@ -151,11 +153,41 @@ def write_block_rows(cur, block: Block, registry: Optional[Registry] = None) -> 
     return block_id
 
 
+def check_block_counts(cur, block: Block, block_id: int) -> None:
+    """D14: compare what this transaction wrote with what the source said. Raises CountMismatchError."""
+    mismatches = check_counts(source_summary(block), written_summary(cur, block_id))
+    if mismatches:
+        raise CountMismatchError(block.chain_id, block.height, mismatches)
+
+
+def clear_failure(cur, chain_id: str, height: int) -> None:
+    """A stored height is never also in failed_blocks: the row goes in the block's own transaction."""
+    cur.execute("DELETE FROM failed_blocks WHERE chain_id = %s AND height = %s", (chain_id, height))
+
+
+def record_failure(conn, chain_id: str, height: int, error: str, attempts: int = 1) -> None:
+    """Remember a block that could not be indexed. A separate short transaction, after the block's rollback."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO failed_blocks (chain_id, height, error, attempts) VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (chain_id, height) DO UPDATE
+                   SET error = EXCLUDED.error, attempts = failed_blocks.attempts + EXCLUDED.attempts,
+                       last_tried = now()""",
+                (chain_id, height, error, attempts))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+
+
 def write_block(conn, block: Block, registry: Optional[Registry] = None) -> int:
-    """Save a block completely or not at all."""
+    """Save a block completely or not at all: rows, count checks, then COMMIT."""
     try:
         with conn.cursor() as cur:
             block_id = write_block_rows(cur, block, registry)
+            check_block_counts(cur, block, block_id)
+            clear_failure(cur, block.chain_id, block.height)
         conn.commit()
         return block_id
     except BaseException:

@@ -8,13 +8,14 @@ import logging
 import os
 import threading
 import time
+from functools import partial
 from typing import Iterator, Optional
 from urllib.parse import quote
 
 import requests
 
 from ..errors import BadDataError, TransientError
-from ..models import Block
+from ..models import Block, WorkItem
 from ..parse import parse_txs_block
 from .endpoints import Endpoint, EndpointPool, load_endpoints
 from .replay import ReplayCache
@@ -120,10 +121,19 @@ class RestSource:
             self.cache.write(block.chain_id, height, pages, results)   # raw bytes, only for blocks that parsed
         return block
 
-    def blocks(self) -> Iterator[Block]:
+    def fetch(self, chain_id: str, height: int) -> Block:
+        if chain_id != self.chain_id:
+            raise BadDataError(f"this source serves {self.chain_id}, not {chain_id}")
+        return self.block(height)
+
+    def items(self, stop=None) -> Iterator[WorkItem]:
         last = self.to_height if self.to_height is not None else self.latest_height()
         for height in range(self.from_height, last + 1):
-            yield self.block(height)
+            yield WorkItem(self.chain_id, height, partial(self.block, height))
+
+    def blocks(self) -> Iterator[Block]:
+        for item in self.items():
+            yield item.load()
 
 
 def _load(data: bytes, what: str) -> dict:

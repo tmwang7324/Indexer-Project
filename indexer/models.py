@@ -1,6 +1,6 @@
 """Plain data objects produced by the parser (one parse per block)."""
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 
 @dataclass(frozen=True)
@@ -46,3 +46,12 @@ class Block:
 
 
 JsonDict = dict[str, Any]
+
+
+@dataclass(frozen=True)
+class WorkItem:
+    """One block to index. `load` fetches and parses it (it may raise BadDataError or TransientError);
+    the height is known before the block is loaded, so a failure can be recorded against it."""
+    chain_id: str
+    height: int
+    load: Callable[[], Block]
