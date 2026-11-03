@@ -8,9 +8,6 @@ import logging
 import os
 import threading
 import time
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
-from itertools import islice
 from typing import Iterator, Optional
 from urllib.parse import quote
 
@@ -35,15 +32,13 @@ class _EndpointFailure(Exception):
 class RestSource:
     def __init__(self, from_height: int, to_height: Optional[int] = None, chain_id: str = "phoenix-1",
                  pool: Optional[EndpointPool] = None, record: Optional[str] = None,
-                 clock=time.monotonic, sleep=time.sleep, max_rounds: int = MAX_ROUNDS,
-                 prefetch: int = 1):
+                 clock=time.monotonic, sleep=time.sleep, max_rounds: int = MAX_ROUNDS):
         self.from_height, self.to_height, self.chain_id = from_height, to_height, chain_id
         self.pool = pool or EndpointPool(
             load_endpoints(clock, sleep), clock=clock,
             cooldown=float(os.environ.get("INDEXER_ENDPOINT_COOLDOWN", "30")))
         self.cache = ReplayCache(record) if record else None
         self._sleep, self._max_rounds = sleep, max_rounds
-        self.prefetch = max(1, prefetch)         # how many blocks may be fetched ahead of the one being written
         self._local = threading.local()          # one requests.Session per thread
         self.skipped: list = []
 
@@ -126,35 +121,9 @@ class RestSource:
         return block
 
     def blocks(self) -> Iterator[Block]:
-        """Blocks in ascending height. With prefetch > 1, several are fetched at once but still yielded in order."""
         last = self.to_height if self.to_height is not None else self.latest_height()
-        heights = iter(range(self.from_height, last + 1))
-        if self.prefetch == 1:
-            for height in heights:
-                yield self.block(height)
-        else:
-            yield from self._prefetched(heights)
-
-    def _prefetched(self, heights) -> Iterator[Block]:
-        """A sliding window of `prefetch` heights in flight.
-
-        The oldest height is always the one waited for, so blocks come out in height order and an error is raised
-        at its own height, after every earlier block has been yielded. When the consumer takes a block, the next
-        height enters the window. The window is bounded, so memory is too. Closing the generator, or an error,
-        cancels what has not started and waits for what is in flight (every request has a timeout).
-        """
-        executor = ThreadPoolExecutor(max_workers=self.prefetch, thread_name_prefix="prefetch")
-        window = deque()
-        try:
-            for height in islice(heights, self.prefetch):
-                window.append(executor.submit(self.block, height))
-            while window:
-                block = window.popleft().result()
-                for height in islice(heights, 1):
-                    window.append(executor.submit(self.block, height))     # keep the window full while the caller writes
-                yield block
-        finally:
-            executor.shutdown(wait=True, cancel_futures=True)
+        for height in range(self.from_height, last + 1):
+            yield self.block(height)
 
 
 def _load(data: bytes, what: str) -> dict:

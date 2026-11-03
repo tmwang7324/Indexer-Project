@@ -24,8 +24,6 @@ class FakeNode:
         self.arrivals: list = []          # monotonic time of every request
         self.paths: list = []
         self._lock = threading.Lock()
-        self.arrived = threading.Condition(self._lock)       # notified on every request
-        self.gates: dict = {}                                # height -> Event: requests for it wait until it is set
         node = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -62,10 +60,6 @@ class FakeNode:
             n = len(self.arrivals)
             self.arrivals.append(time.monotonic())
             self.paths.append(h.path)
-            self.arrived.notify_all()
-        gate = self.gates.get(self._height_of(h.path))
-        if gate is not None:
-            gate.wait(timeout=15)                  # a test releases it; the timeout only stops a hung test
         scripted = self.script(n)
         if scripted is not None:      # a status, or (status, body)
             status, body = scripted if isinstance(scripted, tuple) else (scripted, b'{"error": "scripted"}')
@@ -89,20 +83,6 @@ class FakeNode:
         except Exception:      # unknown height, bad key: what a pruned node says
             return self._send(h, 404, b'{"error": "not found"}')
         return self._send(h, 404, b'{"error": "not found"}')
-
-    def wait_for(self, predicate, timeout: float = 10.0) -> bool:
-        """Block until predicate(self.paths) is true (re-checked on every request). No polling, no sleeping."""
-        with self.arrived:
-            return self.arrived.wait_for(lambda: predicate(list(self.paths)), timeout)
-
-    @staticmethod
-    def _height_of(path):
-        url = urlparse(path)
-        if url.path.startswith("/cosmos/tx/v1beta1/txs/block/"):
-            return int(url.path.rsplit("/", 1)[1])
-        if url.path == "/block_results":
-            return int(parse_qs(url.query)["height"][0])
-        return None
 
     @staticmethod
     def _send(h, status, body):

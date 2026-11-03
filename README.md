@@ -174,10 +174,9 @@ Create the schema with `alembic upgrade head` (migrations are hand-written SQL i
 ```
 python -m indexer run --source files:test_blocks                 # Migaloo block files that have a decoded fixture
 python -m indexer run --source replay:tests/indexer/data/terra   # Terra blocks from a replay cache
-python -m indexer run --source rest --from-height N [--to-height M] [--record DIR] [--prefetch N]   # live Terra nodes
+python -m indexer run --source rest --from-height N [--to-height M] [--record DIR]   # live Terra nodes
 python -m api                                                    # GraphQL at http://127.0.0.1:8000/graphql
 ```
-`--prefetch N` (default 4) fetches up to N blocks at once; they are still written one at a time, in height order.
 `--record DIR` saves the raw responses of every fetched block (gzipped) into a replay cache, so later runs
 (`--source replay:DIR`) need no network. Public endpoints and their rate limits are in
 `indexer/sources/endpoints.py`; override them with `INDEXER_ENDPOINTS` (a JSON list) and
