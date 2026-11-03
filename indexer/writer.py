@@ -5,12 +5,14 @@ wrap it in a transaction it rolls back. Only `write_block` controls BEGIN/COMMIT
 Inserts use ON CONFLICT DO NOTHING, then look the existing row up when no row comes back.
 """
 import logging
-from typing import Optional
+from dataclasses import dataclass
+from typing import Callable, Optional
 
 from psycopg2 import sql
 from psycopg2.extras import Json, execute_values
 
 from .addresses import classify_address
+from .checkpoint import advance_checkpoint
 from .errors import CountMismatchError
 from .handlers import Registry, get_registry
 from .handlers.spec import HandlerResult
@@ -181,15 +183,33 @@ def record_failure(conn, chain_id: str, height: int, error: str, attempts: int =
         raise
 
 
-def write_block(conn, block: Block, registry: Optional[Registry] = None) -> int:
-    """Save a block completely or not at all: rows, count checks, then COMMIT."""
+@dataclass(frozen=True)
+class Hooks:
+    """Test seams around the commit (D22). Production passes none."""
+    before_commit: Optional[Callable[[int], None]] = None      # called with the height, rows written, not committed
+    after_commit: Optional[Callable[[int], None]] = None
+
+
+def write_block(conn, block: Block, registry: Optional[Registry] = None, *,
+                base: Optional[int] = None, hooks: Optional[Hooks] = None) -> int:
+    """Save a block completely or not at all: rows, count checks, checkpoint, then COMMIT.
+
+    `base` (the height just below the run's first block) switches the checkpoint on; without it the
+    checkpoint is not touched.
+    """
     try:
         with conn.cursor() as cur:
             block_id = write_block_rows(cur, block, registry)
             check_block_counts(cur, block, block_id)
             clear_failure(cur, block.chain_id, block.height)
+            if base is not None:
+                advance_checkpoint(cur, block.chain_id, base)     # last: it holds a lock until the commit
+        if hooks and hooks.before_commit:
+            hooks.before_commit(block.height)
         conn.commit()
-        return block_id
     except BaseException:
         conn.rollback()
         raise
+    if hooks and hooks.after_commit:
+        hooks.after_commit(block.height)
+    return block_id

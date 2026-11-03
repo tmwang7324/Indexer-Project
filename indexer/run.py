@@ -5,6 +5,7 @@ import os
 import random
 import sys
 
+from .checkpoint import resolve_start
 from .db import connect
 from .errors import BadDataError, TransientError
 from .sources.files import FilesSource
@@ -26,8 +27,6 @@ def build_source(spec: str, from_height=None, to_height=None, record=None):
     if kind == "replay" and arg:
         return ReplaySource(arg, from_height=from_height)
     if spec == "rest":
-        if from_height is None:
-            raise SystemExit("--source rest needs --from-height")
         return RestSource(from_height, to_height, record=record)
     raise SystemExit(f"unknown --source {spec!r} (expected files:<dir>, replay:<dir> or rest)")
 
@@ -36,6 +35,10 @@ def cmd_run(args) -> int:
     source = build_source(args.source, args.from_height, args.to_height, args.record)
     conn = connect()
     try:
+        if isinstance(source, RestSource):
+            source.from_height = resolve_start(conn, source.chain_id, args.from_height)
+            if source.from_height is None:
+                raise SystemExit("--source rest needs --from-height when nothing has been indexed yet")
         stats = run_items(source.items(), conn)
     except TransientError as exc:
         log.error("giving up: %s", exc)
@@ -46,7 +49,8 @@ def cmd_run(args) -> int:
     finally:
         conn.close()
     skipped = getattr(source, "skipped", [])
-    log.info("done: %d blocks indexed, %d failed, %d skipped", stats.stored, stats.failed, len(skipped))
+    log.info("done: %d blocks indexed, %d failed, %d already stored, %d without decoded transactions",
+             stats.stored, stats.failed, stats.skipped, len(skipped))
     return EXIT_FAILED_BLOCKS if stats.failed else EXIT_OK
 
 
