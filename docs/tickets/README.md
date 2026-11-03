@@ -69,6 +69,7 @@ python -m indexer decode <block files>
 - Coverage floors hold: 90% branch on critical modules, 80% overall (D23).
 - New tests follow the rulebook's pre-merge checklist.
 - `REVAMP.md` is updated if the ticket changed a decision.
+- The wave's entry is added to `docs/IMPLEMENTATION_LOG.md`: problems faced, key decisions, testing strategy and standards (see `CLAUDE.md`).
 
 ## Traceability
 

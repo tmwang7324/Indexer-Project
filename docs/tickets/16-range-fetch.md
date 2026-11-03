@@ -9,7 +9,7 @@
 ## Why
 Measured on 2026-11-02, from `terra-rpc.publicnode.com` and 4,484 recent `phoenix-1` blocks:
 - 72% of blocks are empty (0.62 transactions per block overall, 2.25 per non-empty block).
-- The ceiling of the REST source is `Σ(rate) / requests per block`: with the default 2 endpoints × 5 requests/s and 2 requests per block that is 5 blocks/s, and ticket 05's prefetch already reaches it (2.1 → 4.0 → 5.2 blocks/s at 1, 4 and 8 blocks in flight). More concurrency cannot go faster; fewer requests per block can.
+- The ceiling of the REST source is `Σ(rate) / requests per block`: with the default 2 endpoints × 5 requests/s and 2 requests per block that is 5 blocks/s, and a throw-away experiment with several blocks in flight reached it (2.1 → 4.0 → 5.2 blocks/s at 1, 4 and 8 blocks in flight; see `docs/IMPLEMENTATION_LOG.md`, wave 2). More concurrency cannot go faster than that; fewer requests per block can.
 - `/blockchain?minHeight=a&maxHeight=b` returns, per block, `block_id` and the full `header` plus `num_txs`. An empty block's whole row (chain, height, hash, time, zero transactions) is in it. The hash and time equal those of the full block.
 - Requests per 20 blocks drop from 40 to `1 + N + ceil(N/10)`; at 28% non-empty that is about 7.5, or 0.38 per block.
 
@@ -30,7 +30,7 @@ Facts about the endpoints, checked on 2026-11-02 (re-check before relying on the
 - **JSON-RPC batch** (POST of an array) is limited to **10 requests** on publicnode (`batch request exceeds maximum (10)`). The limit is configurable, `INDEXER_RPC_BATCH`, default 10; larger sets are split into chunks.
 
 Behaviour:
-- **Windows.** Heights are planned in windows of 20 starting at `--from-height` (the last window ends at `--to-height`, or the head). One `/blockchain` request per window, made once even when several fetchers need it (a memoised future per window). A window is dropped from memory once its last height is consumed. The prefetch window of ticket 05 is unchanged: `block(height)` stays per height and consults the plan.
+- **Windows.** Heights are planned in windows of 20 starting at `--from-height` (the last window ends at `--to-height`, or the head). One `/blockchain` request per window, made once even when several fetchers need it (a memoised future per window). A window is dropped from memory once its last height is consumed. The planner is shared by every caller of `block(height)`, one thread today and the worker threads of ticket 08 later, so it must be thread-safe: `block(height)` stays per height and consults the plan.
 - **Empty block** (`num_txs == "0"`): built from the header entry alone, `tx_num = 0`, no per-block request. It is written like any other block, so the writer, the invariant checker and the API need no change.
 - **Non-empty block:** `txs/block` (all pages) as today. Its `block_results` come from a batch request covering the non-empty heights of the window, in chunks of at most `INDEXER_RPC_BATCH`; one memoised future per chunk. A JSON-RPC error inside a batch element (for example a pruned height) is bad data for that height only.
 - **Cross-check.** For a non-empty block the header's `num_txs` must equal the number of transactions in `txs/block`; if not, bad data ("the two responses disagree"), same class as ticket 04's count rule. Because an empty block now has no `block_results` to compare, this check plus `data_hash` being the hash of an empty input stand in for it.
@@ -48,7 +48,7 @@ Behaviour:
 - [ ] Indexing a window from the fake node gives the same rows as the per-block path (`--no-ranges`) and as replaying the recording.
 - [ ] The fake node sees exactly `1 + N + ceil(N / 10)` requests for a window with `N` non-empty blocks, and none per empty block.
 - [ ] A header whose `num_txs` disagrees with `txs/block` fails the block as bad data, and nothing is written.
-- [ ] With `--prefetch 4`, order, the per-node rate limit and the stored rows are unchanged.
+- [ ] Called from several threads at once, the plan is built once per window (one `/blockchain` request each), the per-node rate limit holds, and the stored rows are unchanged.
 - [ ] `--no-ranges`, and an endpoint without `/blockchain`, give the old behaviour.
 - [ ] *(manual, not a test)* On the live head, requests per block and blocks/s are measured before and after with the default limits and written into `REVAMP.md` section 9. Expected: about 0.4 requests per block and a ceiling near 25 blocks/s.
 
@@ -56,7 +56,7 @@ Behaviour:
 | ID | Layer | Cases |
 |---|---|---|
 | U13 | unit | `test_range_plan`: a real captured `/blockchain` reply parses (descending order, string `num_txs`, hex hash) and an empty entry becomes the same `Block` as the full responses give; windows are aligned and truncated at the end height; a batch of 23 splits into 10 + 10 + 3; a missing height falls back |
-| I12 | integration | `test_range_fetch`: fake node with mixed empty and non-empty blocks: same rows as the per-block path, exact request count, `num_txs` disagreement, `--no-ranges` and unsupported endpoint, record then replay including empty blocks, prefetch 4 with the rate limit |
+| I12 | integration | `test_range_fetch`: fake node with mixed empty and non-empty blocks: same rows as the per-block path, exact request count, `num_txs` disagreement, `--no-ranges` and unsupported endpoint, record then replay including empty blocks, four threads calling `block(height)` at once with the rate limit |
 | U11 | unit | adds: a per-height `.meta` file round-trips; a height with a `.meta` and no `.txs` is an empty block |
 
 **Test data and tools:**

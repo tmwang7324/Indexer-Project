@@ -308,7 +308,7 @@ The existing 27 tests (`tests/`) cover the old pipeline and stay as a fifth grou
 | I9 | `test_catch_up_then_follow` | catch up from S to a scripted head, follow new blocks, restart while following (D16) |
 | I10 | `test_legacy_coexistence` | the old pipeline loads into `legacy` while the `indexer` schema stays unchanged (D9) |
 | I11 | `test_benchmark_command` | 5-block hermetic benchmark against fakes; a parity mismatch exits non-zero (D10) |
-| I12 | `test_range_fetch` | fake node with empty and non-empty blocks: same rows as the per-block path, exact request count `1 + N + ceil(N/10)`, a `num_txs` disagreement is bad data, `--no-ranges` and an endpoint without `/blockchain`, record then replay including empty blocks, prefetch with the rate limit (D27) |
+| I12 | `test_range_fetch` | fake node with empty and non-empty blocks: same rows as the per-block path, exact request count `1 + N + ceil(N/10)`, a `num_txs` disagreement is bad data, `--no-ranges` and an endpoint without `/blockchain`, record then replay including empty blocks, concurrent callers with the rate limit (D27) |
 
 **End-to-end** (separate indexer process, replay cache instead of the network)
 
@@ -357,6 +357,8 @@ The rules are kept, in a reusable form, in [`docs/TESTING_RULEBOOK.md`](docs/TES
 ---
 
 ## 9. Implementation notes (tickets 01 to 05)
+
+Every implementation wave also gets an entry in [`docs/IMPLEMENTATION_LOG.md`](docs/IMPLEMENTATION_LOG.md): problems faced, key decisions, testing strategy and standards. The single-threaded baseline kept for the final benchmark is described in [`docs/benchmarks/single-threaded-baseline.md`](docs/benchmarks/single-threaded-baseline.md).
 
 Where the first five tickets were built differently from, or beyond, what the tickets say. None of these changes a decision in section 7.
 
