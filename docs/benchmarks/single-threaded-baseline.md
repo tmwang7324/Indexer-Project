@@ -14,6 +14,8 @@ INDEXER_DB_NAME=<scratch db> python tools/bench_single_threaded.py --replay <rep
 INDEXER_DB_NAME=<scratch db> python tools/bench_single_threaded.py --live 60 --from-height <H> --reset
 ```
 
+The final comparison with the old pipeline and the finished multi-threaded pipeline is in [`final-comparison.md`](final-comparison.md).
+
 ## Results (2026-11-03)
 Environment: this cloud container, Python 3.13.18, PostgreSQL 16.15 on the same machine (on-disk cluster, fsync on), one commit per block. Live runs use the default endpoint limits (publicnode and Polkachu, 5 requests/s each) and 2 requests per block.
 

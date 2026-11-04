@@ -88,3 +88,23 @@ def test_the_cli_takes_a_worker_count(indexer_env, tmp_path):
         check_invariants(conn)
     finally:
         conn.close()
+
+
+def test_connections_are_reused_not_reopened_for_every_block(clean_db, tmp_path, monkeypatch):
+    """The pool keeps one connection per worker open for the whole run. (It once kept only one, so with several
+    workers nearly every block opened and closed a database connection, which made 8 workers 5 times slower than 1.)"""
+    import psycopg2
+    cache = tmp_path / "cache"
+    renumbered_cache(cache, START)
+    opened = []
+    real_connect = psycopg2.connect
+
+    def counting_connect(*args, **kwargs):
+        opened.append(1)
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(psycopg2, "connect", counting_connect)
+    p = pipeline(ReplaySource(cache), workers=4)
+    assert p.run().stored == 50
+    assert len(opened) <= 4 + 1, f"{len(opened)} connections were opened for 4 workers and 50 blocks"
+    assert p.pool.in_use == 0

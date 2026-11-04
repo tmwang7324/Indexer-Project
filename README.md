@@ -132,6 +132,17 @@ or
 ```
 bash load_transactions.sh -b <block folder location> -t
 ```
+### The old pipeline is a performance baseline
+`load_transactions.sh` is kept so the new indexer can be compared with it. **Run it on its own, never at the same time
+as the indexer**: two writers on one machine skew each other's timings, and the comparison (below) exists to be fair.
+To keep its tables apart from the indexer's, give it a schema: `"db_schema": "legacy"` under `psql` in `info.json`, or
+`INDEXER_DB_SCHEMA=legacy` in the environment (the script creates the schema and applies it as the connection's
+`search_path`; with neither set it uses the database default, exactly as before). `INDEXER_DB_NAME`, `_USER`,
+`_PASSWORD`, `_HOST` and `_PORT` override the values in `info.json` when set. `LEGACY_DECODE_URLS` (comma-separated
+base URLs) replaces the public decode endpoints, for example with a local fake. The validator accepts Terra blocks, and
+the line-5 fixer only deletes a line when the schema error is about `block_id.part_set_header.total`; any other
+failure exits 8 and leaves the file as it is.
+
 ## Running the tests
 From the root directory of the repository:
 ```
@@ -177,6 +188,8 @@ python -m indexer run --source replay:tests/indexer/data/terra   # Terra blocks 
 python -m indexer run --source rest [--from-height N] [--to-height M] [--no-follow] [--workers W] [--record DIR]
 python -m indexer verify --sample 50 --source replay:DIR [--seed S]   # compare stored blocks with the source
 python -m api                                                    # GraphQL at http://127.0.0.1:8000/graphql
+python -m indexer bench --heights A:B --prepare                  # fetch the benchmark inputs (needs the network)
+python -m indexer bench --heights A:B [--workers W] [--decode local|live] [--live] [--only old,baseline,new]
 ```
 **Where a live run starts:** one above the checkpoint if there is one, otherwise `--from-height`, otherwise 25,000
 blocks below the head. **Where it ends:** with `--to-height` or `--no-follow` at that height or the head found at start;
@@ -192,6 +205,18 @@ otherwise it catches up, then keeps polling the head and indexes each new block 
 a block that still fails, or has bad data (including a count mismatch between the source and what was written), is
 rolled back and recorded in `failed_blocks` while the run goes on. A bug stops the whole run. If 10 blocks in a row
 are given up on, the run stops as an outage.
+
+**Benchmark (`bench`):** compares the old pipeline, the single-threaded baseline (commit `3d34de0`, checked out into a
+temporary `git worktree` and migrated with its own migrations) and the revamped pipeline on the same consecutive Terra
+blocks. `--prepare` records the new indexer's responses into `bench/cache` and fetches the old-format block files into
+`bench/blocks` (`--from-cache DIR` derives both from an existing replay cache instead). A run executes the contenders
+**one after another**, each in its own scratch database that is dropped afterwards, refuses to start while an
+`application_name=indexer` session is active on the server, checks height by height that every contender stored the same
+blocks, transactions and messages, and writes `bench/report-<time>.md`. Exit code `0` ran and matched, `1` a parity
+mismatch, `2` could not run. The old pipeline's time includes two decode requests per transaction (`--decode local`
+answers them from the prepared cache, `--decode live` asks the public nodes). `--live` makes the baseline and the
+revamped pipeline fetch from the nodes instead of reading the cache. The scratch databases need a role that may
+`CREATE DATABASE`. Results: `docs/benchmarks/final-comparison.md`.
 
 **Exit codes:** `0` finished; `1` stopped by an error or outage; `2` stopped by SIGTERM/SIGINT after the blocks in
 flight finished; `3` finished, but some blocks are in `failed_blocks`.
@@ -218,10 +243,10 @@ pytest -m legacy          # the old pipeline's tests
 pytest --update-golden    # rewrite expected-JSON files; review the diff before committing
 ```
 The test database is `INDEXER_TEST_DB_*` (default `127.0.0.1:5433`, database `indexer_test`, user and password
-`indexer`). A missing database **fails** the database-backed tests; it never skips them. Until the legacy pipeline
-moves to its own schema (ticket 12), run the legacy tests against a separate database
-(`INDEXER_TEST_DB_NAME=legacy_test pytest -m legacy`): its scripts create unqualified tables, which would otherwise
-land in the `indexer` schema when the database user is called `indexer`.
+`indexer`). A missing database **fails** the database-backed tests; it never skips them. Run the legacy tests against
+a separate database (`INDEXER_TEST_DB_NAME=legacy_test pytest -m legacy`): they reset the `public` schema and create
+unqualified tables, which would otherwise land in the `indexer` schema when the database user is called `indexer`. (The
+old pipeline itself can use a `legacy` schema now; test `I10` covers that.)
 
 The curated Terra sample under `tests/indexer/data/terra/` (about 50 real `phoenix-1` blocks) was picked with
 `tools/curate_sample.py` from a local replay cache.

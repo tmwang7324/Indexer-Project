@@ -20,10 +20,10 @@
 - **Decode endpoints:** the old pipeline's decode endpoint list becomes overridable by environment variable. Ticket 14 needs this to point it at a local fake; the default is unchanged.
 
 ## Acceptance criteria
-- [ ] Legacy load into `legacy` leaves the `indexer` schema untouched.
-- [ ] The README states that the legacy loader is a baseline and must not run while the indexer is running.
-- [ ] A real Terra block file passes `check_one_file.py`.
-- [ ] A block failing the schema for an unrelated reason exits 8 and the file is unchanged; a block whose line 5 has a malformed `total` loses only line 5.
+- [x] Legacy load into `legacy` leaves the `indexer` schema untouched.
+- [x] The README states that the legacy loader is a baseline and must not run while the indexer is running.
+- [x] A real Terra block file passes `check_one_file.py`.
+- [x] A block failing the schema for an unrelated reason exits 8 and the file is unchanged; a block whose line 5 has a malformed `total` loses only line 5.
 
 ## Tests in this ticket
 | ID | Layer | Cases |

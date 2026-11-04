@@ -29,9 +29,9 @@ The new indexer as of tickets 01 to 05 fetches or reads one block, writes it, an
 - **The report** states that the old pipeline's time includes 2 HTTP decode calls per transaction, and that the new indexer's figure comes from the replay cache, so the two are labelled rather than presented as like-for-like.
 
 ## Acceptance criteria
-- [ ] The 5-block hermetic run produces a report with throughput for the pipelines (the baseline through the stub) and a parity result.
-- [ ] A parity mismatch is reported per height and makes the command exit non-zero.
-- [ ] The contenders run strictly one at a time, and the command refuses to start while an indexer session is active.
+- [x] The 5-block hermetic run produces a report with throughput for the pipelines (the baseline through the stub) and a parity result.
+- [x] A parity mismatch is reported per height and makes the command exit non-zero.
+- [x] The contenders run strictly one at a time, and the command refuses to start while an indexer session is active.
 
 ## Tests in this ticket
 | ID | Layer | Cases |

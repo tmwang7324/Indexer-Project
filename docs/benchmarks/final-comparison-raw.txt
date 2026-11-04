@@ -1,0 +1,54 @@
+# Raw output of the final comparison runs (2026-11-03). One line per run of 'python -m indexer bench'.
+
+## Old pipeline, 1000 blocks, local decode (run alone)
+bench: old: 1000 blocks in 1242.95s = 0.8 blocks/s, 0.7 tx/s
+
+## Offline, 1000 blocks, AFTER the pool fix (3 repeats; 'workers N' = revamped pipeline)
+run 1 bench: baseline: 1000 blocks in 4.51s = 221.7 blocks/s, 194.5 tx/s
+run 1 workers 1 bench: new: 1000 blocks in 6.52s = 153.3 blocks/s, 134.5 tx/s
+run 1 workers 2 bench: new: 1000 blocks in 4.23s = 236.7 blocks/s, 207.6 tx/s
+run 1 workers 4 bench: new: 1000 blocks in 3.91s = 255.5 blocks/s, 224.1 tx/s
+run 1 workers 8 bench: new: 1000 blocks in 4.22s = 236.8 blocks/s, 207.7 tx/s
+run 1 workers 16 bench: new: 1000 blocks in 4.52s = 221.2 blocks/s, 194.0 tx/s
+run 2 bench: baseline: 1000 blocks in 4.04s = 247.5 blocks/s, 217.1 tx/s
+run 2 workers 1 bench: new: 1000 blocks in 7.08s = 141.3 blocks/s, 123.9 tx/s
+run 2 workers 2 bench: new: 1000 blocks in 4.40s = 227.4 blocks/s, 199.4 tx/s
+run 2 workers 4 bench: new: 1000 blocks in 4.06s = 246.2 blocks/s, 215.9 tx/s
+run 2 workers 8 bench: new: 1000 blocks in 4.21s = 237.4 blocks/s, 208.2 tx/s
+run 2 workers 16 bench: new: 1000 blocks in 4.43s = 225.7 blocks/s, 197.9 tx/s
+run 3 bench: baseline: 1000 blocks in 4.01s = 249.4 blocks/s, 218.7 tx/s
+run 3 workers 1 bench: new: 1000 blocks in 6.37s = 157.0 blocks/s, 137.6 tx/s
+run 3 workers 2 bench: new: 1000 blocks in 4.29s = 233.3 blocks/s, 204.6 tx/s
+run 3 workers 4 bench: new: 1000 blocks in 3.53s = 283.1 blocks/s, 248.3 tx/s
+run 3 workers 8 bench: new: 1000 blocks in 3.65s = 274.2 blocks/s, 240.5 tx/s
+run 3 workers 16 bench: new: 1000 blocks in 4.29s = 233.2 blocks/s, 204.5 tx/s
+
+## Offline, 1000 blocks, BEFORE the pool fix (same commands, found the bug)
+run 1 bench: baseline: 1000 blocks in 4.33s = 230.9 blocks/s, 202.5 tx/s
+run 1 workers 1 bench: new: 1000 blocks in 6.60s = 151.4 blocks/s, 132.8 tx/s
+run 1 workers 2 bench: new: 1000 blocks in 4.98s = 200.8 blocks/s, 176.1 tx/s
+run 1 workers 4 bench: new: 1000 blocks in 16.72s = 59.8 blocks/s, 52.5 tx/s
+run 1 workers 8 bench: new: 1000 blocks in 22.67s = 44.1 blocks/s, 38.7 tx/s
+run 1 workers 16 bench: new: 1000 blocks in 22.54s = 44.4 blocks/s, 38.9 tx/s
+run 2 bench: baseline: 1000 blocks in 3.64s = 274.7 blocks/s, 240.9 tx/s
+run 2 workers 1 bench: new: 1000 blocks in 6.28s = 159.3 blocks/s, 139.7 tx/s
+run 2 workers 2 bench: new: 1000 blocks in 4.59s = 217.8 blocks/s, 191.0 tx/s
+run 2 workers 4 bench: new: 1000 blocks in 17.25s = 58.0 blocks/s, 50.8 tx/s
+run 2 workers 8 bench: new: 1000 blocks in 21.99s = 45.5 blocks/s, 39.9 tx/s
+run 2 workers 16 bench: new: 1000 blocks in 23.84s = 41.9 blocks/s, 36.8 tx/s
+run 3 bench: baseline: 1000 blocks in 3.93s = 254.5 blocks/s, 223.2 tx/s
+run 3 workers 1 bench: new: 1000 blocks in 5.79s = 172.6 blocks/s, 151.4 tx/s
+run 3 workers 2 bench: new: 1000 blocks in 4.66s = 214.6 blocks/s, 188.2 tx/s
+run 3 workers 4 bench: new: 1000 blocks in 18.48s = 54.1 blocks/s, 47.5 tx/s
+run 3 workers 8 bench: new: 1000 blocks in 22.60s = 44.3 blocks/s, 38.8 tx/s
+run 3 workers 16 bench: new: 1000 blocks in 24.40s = 41.0 blocks/s, 35.9 tx/s
+
+## Live (300 blocks from the nodes) and the old pipeline on 40 blocks
+bench: baseline: 300 blocks in 104.18s = 2.9 blocks/s, 6.4 tx/s
+workers 1 bench: new: 300 blocks in 104.84s = 2.9 blocks/s, 6.3 tx/s
+workers 4 bench: new: 300 blocks in 59.89s = 5.0 blocks/s, 11.1 tx/s
+workers 8 bench: new: 300 blocks in 59.57s = 5.0 blocks/s, 11.2 tx/s
+workers 16 bench: new: 300 blocks in 59.73s = 5.0 blocks/s, 11.1 tx/s
+workers 8 (repeat) bench: new: 300 blocks in 59.57s = 5.0 blocks/s, 11.2 tx/s
+bench: old: 40 blocks in 40.83s = 1.0 blocks/s, 0.2 tx/s
+local decode, same 40 blocks: bench: old: 40 blocks in 35.16s = 1.1 blocks/s, 0.2 tx/s

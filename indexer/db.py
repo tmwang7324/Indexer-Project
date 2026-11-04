@@ -27,7 +27,9 @@ class ConnectionPool:
 
     def __init__(self, size: int, settings: DbSettings | None = None):
         self.size = size
-        self._pool = ThreadedConnectionPool(1, size, **_kwargs(settings or DbSettings.from_env()))
+        # minconn == maxconn: psycopg2 closes a returned connection when more than `minconn` are idle, so a
+        # smaller minimum made every worker but one reconnect for nearly every block (found by the benchmark).
+        self._pool = ThreadedConnectionPool(size, size, **_kwargs(settings or DbSettings.from_env()))
         self._lock = threading.Lock()
         self._borrowed = 0
         self.discarded = 0              # connections closed instead of pooled because they broke
